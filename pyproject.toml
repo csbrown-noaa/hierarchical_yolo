@@ -3,13 +3,14 @@ requires = ["flit_core >=3.2,<4"]
 build-backend = "flit_core.buildapi"
 
 [project]
-name = TODO: pick a project name
+name = "hierarchical_yolo"
 version = "0.1.0"
-description = TODO: input a project description
+description = "yolo, but with hierarchical output"
 authors = [
-    { name = TODO: your name here },
+    { name = "CScott Brown" },
 ]
 dependencies = [
+  "ultralytics",
 ]
 readme = "README.md"
 classifiers = [

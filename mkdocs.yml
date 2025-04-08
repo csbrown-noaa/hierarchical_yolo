@@ -1,6 +1,6 @@
-site_name: TODO: your repository name
+site_name: https://github.com/csbrown-noaa/hierarchical_yolo
 
-repo_url: TODO: your repository url
+repo_url: https://github.com/csbrown-noaa/hierarchical_yolo
 
 theme:
   name: material
