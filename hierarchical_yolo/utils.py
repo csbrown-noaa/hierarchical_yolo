@@ -75,6 +75,11 @@ def hierarchically_index_flat_scores(flat_scores, target_indices, hierarchy_inde
     flat_mask = hierarchy_mask[target_indices]
     unraveled_indices = torch.unravel_index(flat_indices, (1, batch_size, category_size))
     raveled_scores = flat_scores[unraveled_indices]
-    masked_raveled_scores = raveled_scores.masked_fill(flat_mask, 1)
+    masked_raveled_scores = raveled_scores.masked_fill(flat_mask, 0)
     return masked_raveled_scores
 
+def hierarchical_loss(hierarchical_predictions, targets, mask):
+    logsigmoids = torch.nn.functional.logsigmoid(hierarchical_predictions) * mask
+    summed_logsigmoids = torch.sum(logsigmoids, dim=1)
+    log1sigmoids = torch.log1p(-torch.exp(summed_logsigmoids))
+    return -(targets * summed_logsigmoids + (1 - targets) * log1sigmoids)

@@ -66,21 +66,39 @@ class TestHierarchicalIndex(unittest.TestCase):
 
     masked_hierarchical_scores = [
         [0.0100, 0.0900, 0.0500],
-        [0.4600, 0.8100, 1.0000],
-        [0.2200, 1.0000, 1.0000],
+        [0.4600, 0.8100, 0.0000],
+        [0.2200, 0.0000, 0.0000],
         [0.5100, 0.4600, 0.4800]
     ]
 
-
     def test_hierarchical_index_flat_scores(self):
         hierarchy_index_tensor = TestIndexTensor.deep7_extended_hierarchy_as_index_tensor
-        hierarchy_mask = hierarchy_index_tensor == -1
+        hierarchy_mask = hierarchy_index_tensor != -1
         target_scores = torch.tensor(TestHierarchicalIndex.target_scores).unsqueeze(0)
         pred_scores = torch.tensor(TestHierarchicalIndex.flat_scores).unsqueeze(0)
         target_indices = torch.argmax(target_scores, dim=2)
-        masked_hierarchical_scores = hierarchical_yolo.utils.hierarchically_index_flat_scores(pred_scores, target_indices, hierarchy_index_tensor, hierarchy_mask)
+        masked_hierarchical_scores = hierarchical_yolo.utils.hierarchically_index_flat_scores(pred_scores, target_indices, hierarchy_index_tensor, ~hierarchy_mask)
         torch.testing.assert_close(masked_hierarchical_scores, torch.tensor(TestHierarchicalIndex.masked_hierarchical_scores).unsqueeze(0))
         
+    def test_hierarchical_loss(self):
+        hierarchy_index_tensor = TestIndexTensor.deep7_extended_hierarchy_as_index_tensor
+        hierarchy_mask = hierarchy_index_tensor != -1
+        target_scores = torch.tensor(TestHierarchicalIndex.target_scores).unsqueeze(0)
+        pred_scores = torch.tensor(TestHierarchicalIndex.flat_scores).unsqueeze(0)
+        target_indices = torch.argmax(target_scores, dim=2)
+        masked_hierarchical_scores = hierarchical_yolo.utils.hierarchically_index_flat_scores(pred_scores, target_indices, hierarchy_index_tensor, ~hierarchy_mask)
+        target_vector = target_scores.squeeze(0).gather(dim=1, index=target_indices.transpose(0,1)).squeeze(1)
+        flat_mask = hierarchy_mask[target_indices]
+        result = hierarchical_yolo.utils.hierarchical_loss(masked_hierarchical_scores.squeeze(0), target_vector, flat_mask.squeeze(0))
+
+        alternate_calculation_result_scores = torch.sigmoid(masked_hierarchical_scores).masked_fill(~flat_mask, 1)
+        alternate_probs = torch.prod(alternate_calculation_result_scores, dim=2)
+        alternate_logprobs = torch.log(alternate_probs)
+        alternate_log1probs = torch.log1p(-alternate_probs)
+        alternate_loss = -(target_vector * alternate_logprobs.squeeze(0) + (1-target_vector) * alternate_log1probs)
+
+        torch.testing.assert_close(alternate_loss.squeeze(0), result)
+
 
 def load_tests(loader, tests, ignore):
     return utils.doctests(hierarchical_yolo.utils, tests)

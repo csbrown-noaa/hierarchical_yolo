@@ -31,6 +31,7 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
 
         self.bce2 = torch.nn.BCEWithLogitsLoss(reduction='sum')
         self.blah = 0
+        self.shape_counter = {}
         """Initialize v8DetectionLoss with model parameters and task-aligned assignment settings."""
 
     def __call__(self, preds, batch):
@@ -77,71 +78,22 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
 
         #TODO: fix this to be hierarchical loss
 
-        loss[1] = self.bce(pred_scores, target_scores.to(dtype)).sum() / target_scores_sum  # BCE
-
         '''
-        ultralytics.utils.LOGGER.info('pred shape')
-        ultralytics.utils.LOGGER.info(pred_scores.shape)
-        ultralytics.utils.LOGGER.info('target shape')
-        ultralytics.utils.LOGGER.info(target_scores.shape)
-        ultralytics.utils.LOGGER.info('bboxes shape')
-        ultralytics.utils.LOGGER.info(target_bboxes.shape)
-        ultralytics.utils.LOGGER.info('class loss')
-        ultralytics.utils.LOGGER.info(loss[1])
-        ultralytics.utils.LOGGER.info(self.bce2(pred_scores, target_scores.to(dtype)) / target_scores_sum)
-        ultralytics.utils.LOGGER.info('target onehots check')
-        ultralytics.utils.LOGGER.info((torch.count_nonzero(target_scores, dim=1) - 1).abs().sum())
-        ultralytics.utils.LOGGER.info((torch.count_nonzero(target_scores, dim=1) - 1).sum())
-        if not self.blah:
-            log_matrix(target_scores[0])
-            self.blah += 1
-        '''
-      
         target_indices = torch.argmax(target_scores, dim=2)
-        batch_size = target_indices.shape[0]
-        hierarchy_size = self.hierarchy_index_tensor.shape[1]
-        category_size = pred_scores.shape[2]
-        #batch_indices = torch.arange(target_indices.shape[0], device=self.device).unsqueeze(1).repeat(1, self.hierarchy_index_tensor.shape[1])  # (B, max_len)
-        batch_indices = torch.arange(batch_size, device=self.device)
-        flat_indices = batch_indices * category_size + self.hierarchy_index_tensor[target_indices]
-        flat_mask = self.hierarchy_mask[target_indices]
-        unraveled_indices = torch.unravel_index(flat_indices, (1, batch_size, category_size))
-        raveled_scores = pred_scores[unraveled_indices]
-        masked_raveled_scores = raveled_scores.masked_fill(flat_mask, 1)
-        #gathered_scores = pred_scores[0].gather(1, target_indices.clamp(min=0))  # prevent -1 indexing
-        #gathered_indices = self.hierarchy_index_tensor.gather(1, target_indices) #TODO this is broke
-        #targets = torch.index_select(target_scores[0], 1, target_indices)
-        ultralytics.utils.LOGGER.info("targets")
+        masked_hierarchical_scores = hierarchically_index_flat_scores(pred_scores, target_indices, self.hierarchy_index_tensor, self.hierarchy_mask, device=self.device)
         ultralytics.utils.LOGGER.info(target_scores.shape)
         ultralytics.utils.LOGGER.info(target_indices.shape)
-        ultralytics.utils.LOGGER.info(target_indices)
-        ultralytics.utils.LOGGER.info(self.hierarchy_index_tensor.shape)
-        ultralytics.utils.LOGGER.info(self.hierarchy_index_tensor[target_indices].shape)
-        ultralytics.utils.LOGGER.info(flat_indices.shape)
-        ultralytics.utils.LOGGER.info(list(map(lambda x: x.shape, unraveled_indices)))
-        ultralytics.utils.LOGGER.info(raveled_scores.shape)
-        ultralytics.utils.LOGGER.info(flat_mask.shape)
-        ultralytics.utils.LOGGER.info(masked_raveled_scores.shape)
-        #ultralytics.utils.LOGGER.info(gathered_scores.shape)
-        #ultralytics.utils.LOGGER.info(gathered_indices.shape)
-        raise Exception('done')
-        #ultralytics.utils.LOGGER.info(pred_scores.gather(1, batch_ancestor_indices.clamp(min=0)))
-
+        target_vector = target_scores.squeeze(0).gather(dim=1, index=target_indices.transpose(0,1)).squeeze(1)
+        flat_mask = self.hierarchy_mask[target_indices]
+        unnormalized_loss = hierarchical_loss(masked_hierarchical_scores.squeeze(0), target_vector, ~flat_mask.squeeze(0))
+        
+        loss[1] = unnormalized_loss.sum() / target_scores_sum
         '''
-        frontier = set(self.hierarchy.keys())
-        while frontier:
-            parent = frontier.pop()
-            if parent in self.hierarchy:
-                children = self.hierarchy[parent]
-                if not self.blah:
-                    log_matrix(pred_scores[0])
-                for child in children:
-                    pred_scores[0, :, child] *= pred_scores[0, :, parent]
-                if not self.blah:
-                    log_matrix(pred_scores[0])
-                    self.blah += 1
-                frontier |= self.hierarchy[parent]
-        '''
+        self.shape_counter[target_scores.shape] = 1 if target_scores not in self.shape_counter else self.shape_counter[target_scores.shape] + 1
+        if not self.blah % 1000:
+            ultralytics.utils.LOGGER.info(self.shape_counter)
+        self.blah += 1
+        loss[1] = self.bce(pred_scores, target_scores.to(dtype)).sum() / target_scores_sum  # BCE
 
         # Bbox loss
         if fg_mask.sum():
