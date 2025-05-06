@@ -7,6 +7,16 @@ import torch
 def mock_batchify(tensor):
     return tensor.unsqueeze(0).expand(2,-1,-1)
 
+class TestTree(unittest.TestCase):
+
+    simple_tree = {1:2, 2:3, 2:4, 3:5}
+    inverted_simple_tree = {4: {2: {1: {}}}, 5: {3: {}}}
+
+    def test_tree_inversion(self):
+        expected_inversion = hierarchical_yolo.utils.invert_childparent_tree(TestTree.simple_tree)
+        self.assertDictEqual(TestTree.inverted_simple_tree, expected_inversion)
+        
+
 class TestIndexTensor(unittest.TestCase):
 
     '''
