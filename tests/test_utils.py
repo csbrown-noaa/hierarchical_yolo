@@ -1,7 +1,11 @@
 import unittest
 import utils
 import hierarchical_yolo.utils
+import hierarchical_yolo.deep7_model
 import torch
+
+def mock_batchify(tensor):
+    return tensor.unsqueeze(0).expand(2,-1,-1)
 
 class TestIndexTensor(unittest.TestCase):
 
@@ -48,6 +52,7 @@ class TestIndexTensor(unittest.TestCase):
         index_tensor = hierarchical_yolo.utils.build_hierarchy_index_tensor(TestIndexTensor.deep7_extended_hierarchy)
         torch.testing.assert_close(index_tensor, TestIndexTensor.deep7_extended_hierarchy_as_index_tensor)
 
+
 class TestHierarchicalIndex(unittest.TestCase):
 
     flat_scores = [
@@ -71,33 +76,84 @@ class TestHierarchicalIndex(unittest.TestCase):
         [0.5100, 0.4600, 0.4800]
     ]
 
+
+    mock_raw_yolo_output = [
+        [[1.3e+02, 5.1e+02, 4.2e+02, 9.9e+01],
+         [3.2e+02, 2.7e+02, 5.4e+02, 2.8e+02],
+         [1.1e+02, 1.1e+02, 6.2e+01, 1.9e+02],
+         [1.3e+02, 8.6e+01, 8.3e+00, 1.9e+02],
+         [4.7e-04, 1.3e-03, 6.9e-05, 5.3e-04],
+         [2.6e-01, 5.5e-02, 1.7e-04, 4.3e-03],
+         [4.6e-01, 1.4e-01, 1.5e-04, 3.5e-03],
+         [2.7e-02, 4.6e-02, 1.2e-04, 2.8e-03],
+         [1.0e+00, 1.0e+00, 9.7e-04, 5.0e-01],
+         [7.9e-01, 5.8e-01, 7.6e-05, 3.4e-04],
+         [3.4e-01, 1.3e-01, 1.8e-04, 5.5e-03],
+         [5.4e-06, 1.8e-05, 3.6e-05, 9.3e-04]],
+        [[1.2e+02, 4.9e+02, 4.1e+02, 1.3e+02],
+         [2.9e+02, 2.7e+02, 5.4e+02, 2.7e+02],
+         [1.5e+02, 7.0e+01, 4.0e+01, 1.2e+02],
+         [1.4e+02, 1.8e+02, 1.7e+01, 9.1e+01],
+         [2.1e-03, 6.0e-04, 1.2e-04, 1.3e-03],
+         [7.6e-03, 4.8e-03, 3.0e-02, 1.6e-01],
+         [3.3e-03, 7.6e-03, 5.1e-02, 1.3e-01],
+         [2.2e-03, 5.4e-03, 9.1e-05, 1.8e-02],
+         [6.7e-02, 6.8e-01, 1.0e+00, 1.0e+00],
+         [9.6e-04, 6.5e-03, 9.8e-01, 4.4e-01],
+         [1.5e-03, 1.0e-02, 1.2e-03, 1.4e-01],
+         [9.4e-04, 3.0e-04, 1.5e-05, 1.6e-05]]]
+
+    mock_optimal_paths = [[[4, 5], [4, 5], [4, 6]], [[4, 5], [4, 5], [4, 6]]]
+    mock_optimal_path_scores = [
+        [[1.0000, 0.7900],
+         [1.0000, 0.5800],
+         [0.5000, 0.0055]],
+        [[1.0000, 0.9800],
+         [1.0000, 0.4400],
+         [0.6800, 0.0100]]
+    ]
+
     def test_hierarchical_index_flat_scores(self):
+        target_scores = mock_batchify(torch.tensor(TestHierarchicalIndex.target_scores))
+        pred_scores = mock_batchify(torch.tensor(TestHierarchicalIndex.flat_scores))
+        masked_hierarchical_scores_expected = mock_batchify(torch.tensor(TestHierarchicalIndex.masked_hierarchical_scores))
         hierarchy_index_tensor = TestIndexTensor.deep7_extended_hierarchy_as_index_tensor
         hierarchy_mask = hierarchy_index_tensor != -1
-        target_scores = torch.tensor(TestHierarchicalIndex.target_scores).unsqueeze(0)
-        pred_scores = torch.tensor(TestHierarchicalIndex.flat_scores).unsqueeze(0)
         target_indices = torch.argmax(target_scores, dim=2)
         masked_hierarchical_scores = hierarchical_yolo.utils.hierarchically_index_flat_scores(pred_scores, target_indices, hierarchy_index_tensor, ~hierarchy_mask)
-        torch.testing.assert_close(masked_hierarchical_scores, torch.tensor(TestHierarchicalIndex.masked_hierarchical_scores).unsqueeze(0))
+        torch.testing.assert_close(masked_hierarchical_scores, masked_hierarchical_scores_expected)
         
     def test_hierarchical_loss(self):
+        target_scores = mock_batchify(torch.tensor(TestHierarchicalIndex.target_scores))
+        pred_scores = mock_batchify(torch.tensor(TestHierarchicalIndex.flat_scores))
         hierarchy_index_tensor = TestIndexTensor.deep7_extended_hierarchy_as_index_tensor
         hierarchy_mask = hierarchy_index_tensor != -1
-        target_scores = torch.tensor(TestHierarchicalIndex.target_scores).unsqueeze(0)
-        pred_scores = torch.tensor(TestHierarchicalIndex.flat_scores).unsqueeze(0)
         target_indices = torch.argmax(target_scores, dim=2)
         masked_hierarchical_scores = hierarchical_yolo.utils.hierarchically_index_flat_scores(pred_scores, target_indices, hierarchy_index_tensor, ~hierarchy_mask)
-        target_vector = target_scores.squeeze(0).gather(dim=1, index=target_indices.transpose(0,1)).squeeze(1)
+        target_vectors = target_scores.gather(dim=2, index=target_indices.unsqueeze(2)).squeeze(2)
         flat_mask = hierarchy_mask[target_indices]
-        result = hierarchical_yolo.utils.hierarchical_loss(masked_hierarchical_scores.squeeze(0), target_vector, flat_mask.squeeze(0))
+        result = hierarchical_yolo.utils.hierarchical_loss(masked_hierarchical_scores, target_vectors, flat_mask)
 
         alternate_calculation_result_scores = torch.sigmoid(masked_hierarchical_scores).masked_fill(~flat_mask, 1)
         alternate_probs = torch.prod(alternate_calculation_result_scores, dim=2)
         alternate_logprobs = torch.log(alternate_probs)
         alternate_log1probs = torch.log1p(-alternate_probs)
-        alternate_loss = -(target_vector * alternate_logprobs.squeeze(0) + (1-target_vector) * alternate_log1probs)
+        alternate_loss = -(target_vectors * alternate_logprobs.squeeze(0) + (1-target_vectors) * alternate_log1probs)
 
-        torch.testing.assert_close(alternate_loss.squeeze(0), result)
+        torch.testing.assert_close(alternate_loss, result)
+
+    
+    def test_hierarchical_paths(self):
+        raw_output = torch.tensor(TestHierarchicalIndex.mock_raw_yolo_output)
+        hierarchy = hierarchical_yolo.deep7_model.Deep7HierarchicalDetectionTrainer._hierarchy
+        boxes, class_scores = hierarchical_yolo.utils.postprocess_raw_output(raw_output, hierarchy)
+        optimal_paths, optimal_path_scores = hierarchical_yolo.utils.optimal_hierarchical_paths(class_scores, hierarchy)
+        for expected_path, actual_path in zip(TestHierarchicalIndex.mock_optimal_paths, optimal_paths):
+            torch.testing.assert_close(expected_path, actual_path)
+        for expected_path_scores, actual_path_scores in zip(TestHierarchicalIndex.mock_optimal_path_scores, optimal_path_scores):
+            expected_path_scores = torch.tensor(expected_path_scores, device=raw_output.device)
+            torch.testing.assert_close(expected_path_scores, actual_path_scores)
+
 
 
 def load_tests(loader, tests, ignore):

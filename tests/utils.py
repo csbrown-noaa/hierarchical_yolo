@@ -1,5 +1,6 @@
 import doctest
 
+
 def doctests(module, tests):
     """
     A helper function to combine unittest discovery with doctest suites.

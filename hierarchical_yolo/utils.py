@@ -67,19 +67,133 @@ def build_hierarchy_index_tensor(hierarchy, device=None):
     return index_tensor
 
 def hierarchically_index_flat_scores(flat_scores, target_indices, hierarchy_index_tensor, hierarchy_mask, device=None):
-    batch_size = target_indices.shape[1]
+    batch_size, n_proposals, n_categories = flat_scores.shape
     hierarchy_size = hierarchy_index_tensor.shape[1]
-    category_size = flat_scores.shape[2]
-    batch_indices = torch.arange(batch_size, device=device).unsqueeze(1).expand(batch_size, hierarchy_size)
-    flat_indices = batch_indices * category_size + hierarchy_index_tensor[target_indices]
+
+    # Expand hierarchy_index_tensor and mask to shape (B, N, H)
+    hierarchy_indices = hierarchy_index_tensor[target_indices]
     flat_mask = hierarchy_mask[target_indices]
-    unraveled_indices = torch.unravel_index(flat_indices, (1, batch_size, category_size))
-    raveled_scores = flat_scores[unraveled_indices]
-    masked_raveled_scores = raveled_scores.masked_fill(flat_mask, 0)
-    return masked_raveled_scores
+
+    # Construct batch indices
+    batch_indices = torch.arange(batch_size, device=device).view(batch_size, 1, 1).expand(batch_size, n_proposals, hierarchy_size) # (B, N, H)
+    proposal_indices = torch.arange(n_proposals, device=device).view(1, n_proposals, 1).expand(batch_size, n_proposals, hierarchy_size) # (B, N, H)
+
+    # Now index into flat_scores[b, n, c] with b, n, c from the tensors
+    gathered_scores = flat_scores[batch_indices, proposal_indices, hierarchy_indices]  # (B, N, H)
+
+    # Mask out invalid entries
+    masked_scores = gathered_scores.masked_fill(flat_mask, 0.)
+
+    return masked_scores
 
 def hierarchical_loss(hierarchical_predictions, targets, mask):
     logsigmoids = torch.nn.functional.logsigmoid(hierarchical_predictions) * mask
-    summed_logsigmoids = torch.sum(logsigmoids, dim=1)
+    summed_logsigmoids = torch.sum(logsigmoids, dim=2)
     log1sigmoids = torch.log1p(-torch.exp(summed_logsigmoids))
     return -(targets * summed_logsigmoids + (1 - targets) * log1sigmoids)
+
+def get_roots(tree):
+    ancestor_chain_lens = get_ancestor_chain_lens(tree)
+    return [node for node in ancestor_chain_lens if ancestor_chain_lens[node] == 1]
+
+def postprocess_raw_output(raw_yolo_output, hierarchy):
+    all_boxes = []
+    all_class_scores = []
+    _, nms_idxs = ultralytics.utils.ops.non_max_suppression(raw_yolo_output, classes=get_roots(hierarchy), return_idxs=True)
+    for i, idx in enumerate(nms_idxs):
+        nms_output = raw_yolo_output[i].index_select(1, idx)
+        boxes = nms_output[:4, :]
+        class_scores = nms_output[4:, :]
+        all_boxes.append(boxes)
+        all_class_scores.append(class_scores)
+    return all_boxes, all_class_scores
+
+def mul_by_index(index, val, mat):
+    if val is not None:
+        mat[index, :] *= val
+    return mat[index, :]
+
+def get_marginal_confidences(confidences, hierarchy):
+    new_confidences = []
+    for confidence in confidences:
+        confidence = torch.clone(confidence)
+        preorder_apply(hierarchy, mul_by_index, confidence)
+        new_confidences.append(confidence)
+    return new_confidences
+
+def append_to_parentchild_tree(node, ancestral_chain, parentchild_tree):
+    ancestral_chain = ancestral_chain or []
+    for parent in ancestral_chain:
+        parentchild_tree = parentchild_tree[parent]
+    if node not in parentchild_tree:
+        parentchild_tree[node] = {}
+    return ancestral_chain + [node]
+
+def invert_childparent_tree(tree):
+    '''
+    inverts a {child: parent} tree into a {root: tree} tree
+    '''
+    parentchild_tree = {}
+    preorder_apply(tree, append_to_parentchild_tree, parentchild_tree)
+    return parentchild_tree
+
+def get_optimal_ancestral_chain(confidences, hierarchy):
+    '''
+    TODO: This method is very loopy.  It wasn't immediately clear how to tensorify these operations.
+    '''
+    inverted_tree = invert_childparent_tree(hierarchy)
+    bpaths = []
+    for b, confidence in enumerate(confidences):
+        paths = []
+        for i in range(confidence.shape[1]):
+            confidence_row = confidence[..., i]
+            path = []
+            path_tree = inverted_tree
+            while path_tree:
+                parents = list(path_tree.keys())
+                best = confidence_row.index_select(0, torch.tensor(parents, device=confidence.device)).argmax()
+                path.append(parents[best])
+                path_tree = path_tree[parents[best]]
+            paths.append(path)
+        bpaths.append(paths)
+    return bpaths
+
+def optimal_hierarchical_paths(class_scores, hierarchy):
+    optimal_paths = get_optimal_ancestral_chain(class_scores, hierarchy)
+
+    optimal_path_scores = []
+    for scores, paths in zip(class_scores, optimal_paths):
+        optimal_path_scores.append(torch.gather(scores, 0, torch.tensor(paths, device=scores.device).T).T)
+
+    return optimal_paths, optimal_path_scores
+
+def yolo_raw_predict(model, images, shape, cuda=False):
+    import torchvision.transforms as T
+    model.eval()
+
+    transform = T.Compose([
+        T.Resize(shape),
+        T.ToTensor(),
+    ])
+    input_tensor = torch.stack([transform(img) for img in images])
+    if cuda:
+        input_tensor = input_tensor.to('cuda')
+
+    with torch.no_grad():
+        raw_output = model.model(input_tensor)[0]
+
+    return raw_output
+
+def hierarchical_predict(model, hierarchy, images, shape=(640,640), cuda=False):
+
+    raw_output = yolo_raw_predict(model, images, shape, cuda)
+
+    boxes, class_scores = postprocess_raw_output(raw_output, hierarchy)
+    
+    optimal_paths, optimal_path_scores = optimal_hierarchical_paths(class_scores, hierarchy)
+
+    return boxes, optimal_paths, optimal_path_scores
+
+
+
+
