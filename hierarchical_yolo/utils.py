@@ -60,13 +60,112 @@ def set_indices(index, parent_index, tensor):
         tensor[index, 1:] = tensor[parent_index, :-1]
     return index
 
+def build_parent_tensor(tree, device=None):
+    '''
+    Converts a tree in dict format to a 1D tensor
+
+    Parameters
+    ----------
+    tree: dict
+        A tree in { child: parent } format.  Must use ids starting at 0 and running to C-1 where C is the number of categories.
+
+    Returns
+    -------
+    parent_tensor: tensor (C)
+        A tensor where each index has the index of its parent, or -1 if it is a root
+    '''
+    nodes = set(tree.keys()) | set(tree.values())
+    C = max(nodes) + 1
+
+    parent_tensor = torch.full((C,), -1, dtype=torch.long, device=device)
+
+    for child, parent in tree.items():
+        parent_tensor[child] = parent
+
+    return parent_tensor
+
+def build_hierarchy_sibling_mask(parent_tensor, device=None):
+    '''
+    Build a sibling mask (CxG) for use with logsumexp_over_siblings.
+    
+    Parameters
+    ----------
+    parent_tensor: tensor (C)
+        Each node's parent index, -1 for root nodes.
+
+    Returns
+    -------
+    sibling_mask: tensor (CxG)
+        Boolean mask where row i has True in columns corresponding to sibling groups it belongs to.
+        G = number of sibling groups (including a root group)
+    '''
+    C = parent_tensor.shape[0]
+
+    # Identify all unique parents (groups), including -1 for roots
+    unique_parents, inverse_indices = torch.unique(parent_tensor, return_inverse=True)
+    G = len(unique_parents)
+
+    # Map parent index -> column in sibling_mask
+    parent_to_group = {p.item(): g for g, p in enumerate(unique_parents)}
+
+    sibling_mask = torch.zeros(C, G, dtype=torch.bool, device=device)
+
+    # Assign each node to the column of its parent group
+    sibling_mask[torch.arange(C), inverse_indices] = True
+
+    return sibling_mask
+
+
+def logsumexp_over_siblings(flat_scores, sibling_mask):
+    '''
+    Parameters
+    ----------
+    flat_scores: tensor (BxC)
+        raw scores for each category, batch-wise
+    sibling_mask: tensor (CxG)
+        a mask where sibling_mask[i,j] == sibling_mask[k,j] == 1 iff i and k are siblings
+
+    Returns
+    -------
+    logsumexp: tensor (BxC)
+        the logsumexp over all of the siblings of each category.  logsumexp[i,j] == logsumexp[i,k] if j,k are siblings.
+    '''
+
+    B, C = flat_scores.shape
+    G = sibling_mask.shape[1]
+    scores_expanded = flat_scores.unsqueeze(1)  # (B, 1, C)
+    masked_scores = scores_expanded + torch.log(sibling_mask.T.unsqueeze(0))  # (B, G, C)
+    logsumexp_by_group = torch.logsumexp(masked_scores, dim=-1)  # (B, G)
+    zerod_logsumexp = logsumexp_by_group.masked_fill(torch.isinf(logsumexp_by_group), 9)
+    logsumexp = (sibling_mask * zerod_logsumexp.unsqueeze(1)).sum(dim=-1)  # (B, C)
+
+    return logsumexp
+
+
 def build_hierarchy_index_tensor(hierarchy, device=None):
+    '''
+    Translate a hierarchy into a tensor representation.  Parent node ids are to the right of a node.  -1 is always to the right of roots or -1s.
+
+    Example:
+    >>> hierarchy = {0:1, 1:2, 3:4}
+    >>> build_hierarchy_index_tensor(hierarchy)
+    tensor([[ 0,  1,  2],
+            [ 1,  2, -1],
+            [ 2, -1, -1],
+            [ 3,  4, -1],
+            [ 4, -1, -1]], dtype=torch.int32)
+    '''
     lens = get_ancestor_chain_lens(hierarchy)
     index_tensor = torch.full((len(lens), max(lens.values())), -1, dtype=torch.int32, device=device)
     preorder_apply(hierarchy, set_indices, index_tensor)
     return index_tensor
 
 def hierarchically_index_flat_scores(flat_scores, target_indices, hierarchy_index_tensor, hierarchy_mask, device=None):
+    '''
+    Takes a vector of "flat" scores over the entire category space, and extracts a vector of scores over only the branch indicated by the target index.
+    Viz. If the target_index is 4, and 4's hierarchy goes 4,8,-1,-1, then this will extract flat_score[4] and flat_score[8].  The rest are padded out.
+    '''
+
     batch_size, n_proposals, n_categories = flat_scores.shape
     hierarchy_size = hierarchy_index_tensor.shape[1]
 
@@ -86,7 +185,9 @@ def hierarchically_index_flat_scores(flat_scores, target_indices, hierarchy_inde
 
     return masked_scores
 
+
 def hierarchical_loss(hierarchical_predictions, targets, mask):
+    ''' TODO: This is broken!  We have to softmax over SIBLINGS, not the hierarchy! '''
     logsigmoids = torch.nn.functional.logsigmoid(hierarchical_predictions) * mask
     summed_logsigmoids = torch.sum(logsigmoids, dim=2)
     log1sigmoids = torch.log1p(-torch.exp(summed_logsigmoids))
@@ -101,7 +202,17 @@ def postprocess_raw_output(raw_yolo_output, hierarchy):
     all_class_scores = []
     _, nms_idxs = ultralytics.utils.ops.non_max_suppression(raw_yolo_output, classes=get_roots(hierarchy), return_idxs=True)
     for i, idx in enumerate(nms_idxs):
-        nms_output = raw_yolo_output[i].index_select(1, idx)
+        #print(idx)
+        try:
+            flat_idx = idx.flatten()
+            nms_output = raw_yolo_output[i].index_select(1, flat_idx)
+        except Exception as e:
+            print(idx)
+            print(nms_idxs)
+            print(raw_yolo_output)
+            raise e
+        #print('pickle')
+        #print(nms_output.shape)
         boxes = nms_output[:4, :]
         class_scores = nms_output[4:, :]
         all_boxes.append(boxes)
@@ -163,8 +274,10 @@ def optimal_hierarchical_paths(class_scores, hierarchy):
 
     optimal_path_scores = []
     for scores, paths in zip(class_scores, optimal_paths):
-        optimal_path_scores.append(torch.gather(scores, 0, torch.tensor(paths, device=scores.device).T).T)
-
+        optimal_path_score = []
+        for score, path in zip(scores.T, paths):
+            optimal_path_score.append(torch.gather(score, 0, torch.tensor(path, device=scores.device)))
+        optimal_path_scores.append(optimal_path_score)
     return optimal_paths, optimal_path_scores
 
 def yolo_raw_predict(model, images, shape, cuda=False):
@@ -186,11 +299,27 @@ def yolo_raw_predict(model, images, shape, cuda=False):
 
 def hierarchical_predict(model, hierarchy, images, shape=(640,640), cuda=False):
 
+    #TODO cache this
+    parent_tensor = build_parent_tensor(hierarchy)
+    sibling_mask = build_hierarchy_sibling_mask(parent_tensor)
     raw_output = yolo_raw_predict(model, images, shape, cuda)
 
-    boxes, class_scores = postprocess_raw_output(raw_output, hierarchy)
-    
-    optimal_paths, optimal_path_scores = optimal_hierarchical_paths(class_scores, hierarchy)
+    #print(raw_output.shape)
+    #print(raw_output[:,:,20])
+    boxes, pred_scoreses = postprocess_raw_output(raw_output, hierarchy)
+    #print(boxes[0].shape)
+    #print(pred_scoreses[0].shape)
+    '''
+    scores = []
+    for flat_pred in pred_scoreses:
+        #print(flat_pred.shape) 
+        #flat_pred = pred_scores.view(pred_scores.shape[0] * pred_scores.shape[1], pred_scores.shape[2])
+        sibling_normalized_flat_pred = flat_pred - logsumexp_over_siblings(flat_pred, sibling_mask)
+        #sibling_normalized_pred_scores = sibling_normalized_flat_pred.view(*pred_scores.shape)
+        scores.append(sibling_normalized_flat_pred)
+    '''    
+
+    optimal_paths, optimal_path_scores = optimal_hierarchical_paths(pred_scoreses, hierarchy)
 
     return boxes, optimal_paths, optimal_path_scores
 

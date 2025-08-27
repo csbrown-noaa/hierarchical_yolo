@@ -46,6 +46,24 @@ class TestIndexTensor(unittest.TestCase):
         9: 4
     }
 
+    deep7_extended_hierarchy_as_parent_tensor = torch.tensor(
+        [ 8, 8, 9, 8,-1, 8, 8, 8, 4, 4], 
+        dtype = torch.long
+    )
+
+    deep7_extended_hierarchy_as_sibling_mask = torch.tensor([
+        [0, 0, 1, 0],
+        [0, 0, 1, 0],
+        [0, 0, 0, 1],
+        [0, 0, 1, 0],
+        [1, 0, 0, 0],
+        [0, 0, 1, 0],
+        [0, 0, 1, 0],
+        [0, 0, 1, 0],
+        [0, 1, 0, 0],
+        [0, 1, 0, 0]])
+
+
     deep7_extended_hierarchy_as_index_tensor = torch.tensor([
         [ 0,  8,  4],
         [ 1,  8,  4],
@@ -61,6 +79,15 @@ class TestIndexTensor(unittest.TestCase):
     def test_index_tensor(self):
         index_tensor = hierarchical_yolo.utils.build_hierarchy_index_tensor(TestIndexTensor.deep7_extended_hierarchy)
         torch.testing.assert_close(index_tensor, TestIndexTensor.deep7_extended_hierarchy_as_index_tensor)
+
+    def test_parent_tensor(self):
+        parent_tensor = hierarchical_yolo.utils.build_parent_tensor(TestIndexTensor.deep7_extended_hierarchy)
+        torch.testing.assert_close(parent_tensor, TestIndexTensor.deep7_extended_hierarchy_as_parent_tensor)
+
+    def test_sibling_mask(self):
+        parent_tensor = hierarchical_yolo.utils.build_parent_tensor(TestIndexTensor.deep7_extended_hierarchy)
+        sibling_mask = hierarchical_yolo.utils.build_hierarchy_sibling_mask(parent_tensor)
+        torch.testing.assert_close(sibling_mask.long(), TestIndexTensor.deep7_extended_hierarchy_as_sibling_mask)
 
 
 class TestHierarchicalIndex(unittest.TestCase):
@@ -123,6 +150,22 @@ class TestHierarchicalIndex(unittest.TestCase):
          [0.6800, 0.0100]]
     ]
 
+    sibling_logsumexp = torch.tensor([
+        [1.838753, 1.838753, 0.030000, 1.838753, 0.050000, 1.838753, 1.838753, 1.838753, 0.788160, 0.788160],
+        [2.588757, 2.588757, 0.880000, 2.588757, 0.810000, 2.588757, 2.588757, 2.588757, 1.199159, 1.199159],
+        [2.449941, 2.449941, 0.110000, 2.449941, 0.220000, 2.449941, 2.449941, 2.449941, 1.189659, 1.189659],
+        [2.303682, 2.303682, 0.490000, 2.303682, 0.480000, 2.303682, 2.303682, 2.303682, 1.199159, 1.199159]])
+
+
+    def test_sibling_logsumexp(self):
+        flat_scores = torch.tensor(TestHierarchicalIndex.flat_scores)
+        parent_tensor = hierarchical_yolo.utils.build_parent_tensor(TestIndexTensor.deep7_extended_hierarchy)
+        sibling_mask = hierarchical_yolo.utils.build_hierarchy_sibling_mask(parent_tensor)
+
+        logsumexp = hierarchical_yolo.utils.logsumexp_over_siblings(flat_scores, sibling_mask) 
+        torch.testing.assert_close(logsumexp, TestHierarchicalIndex.sibling_logsumexp)
+       
+
     def test_hierarchical_index_flat_scores(self):
         target_scores = mock_batchify(torch.tensor(TestHierarchicalIndex.target_scores))
         pred_scores = mock_batchify(torch.tensor(TestHierarchicalIndex.flat_scores))
@@ -161,8 +204,9 @@ class TestHierarchicalIndex(unittest.TestCase):
         for expected_path, actual_path in zip(TestHierarchicalIndex.mock_optimal_paths, optimal_paths):
             torch.testing.assert_close(expected_path, actual_path)
         for expected_path_scores, actual_path_scores in zip(TestHierarchicalIndex.mock_optimal_path_scores, optimal_path_scores):
-            expected_path_scores = torch.tensor(expected_path_scores, device=raw_output.device)
-            torch.testing.assert_close(expected_path_scores, actual_path_scores)
+            for expected_path_score, actual_path_score in zip(expected_path_scores, actual_path_scores):
+                expected_path_score = torch.tensor(expected_path_score, device=raw_output.device)
+                torch.testing.assert_close(expected_path_score, actual_path_score)
 
 
 

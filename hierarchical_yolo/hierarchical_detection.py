@@ -28,6 +28,8 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
 
         self.hierarchy_index_tensor = build_hierarchy_index_tensor(hierarchy, self.device)
         self.hierarchy_mask = self.hierarchy_index_tensor == -1
+        self.parent_tensor = build_parent_tensor(hierarchy, self.device)
+        self.sibling_mask = build_hierarchy_sibling_mask(self.parent_tensor, self.device)
 
         self.bce2 = torch.nn.BCEWithLogitsLoss(reduction='sum')
         self.blah = 0
@@ -76,16 +78,21 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
         # Cls loss
         # loss[1] = self.varifocal_loss(pred_scores, target_scores, target_labels) / target_scores_sum  # VFL way        
 
-        #TODO: fix this to be hierarchical loss
+        '''
+        flat_pred = pred_scores.view(pred_scores.shape[0] * pred_scores.shape[1], pred_scores.shape[2])
+        sibling_normalized_flat_pred = flat_pred - logsumexp_over_siblings(flat_pred, self.sibling_mask)
+        sibling_normalized_pred_scores = sibling_normalized_flat_pred.view(*pred_scores.shape)
+        ''' 
 
         target_indices = torch.argmax(target_scores, dim=2)
         masked_hierarchical_scores = hierarchically_index_flat_scores(pred_scores, target_indices, self.hierarchy_index_tensor, self.hierarchy_mask, device=self.device)
         #ultralytics.utils.LOGGER.info(target_scores.shape)
         #ultralytics.utils.LOGGER.info(target_indices.shape)
+        #ultralytics.utils.LOGGER.info(pred_scores.shape)
         target_vectors = target_scores.gather(dim=2, index=target_indices.unsqueeze(2)).squeeze(2)
         flat_mask = self.hierarchy_mask[target_indices]
         unnormalized_loss = hierarchical_loss(masked_hierarchical_scores, target_vectors, ~flat_mask)
-        
+ 
         loss[1] = unnormalized_loss.sum() / target_scores_sum
 
         '''
