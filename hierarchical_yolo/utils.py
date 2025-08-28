@@ -28,6 +28,14 @@ def preorder_apply(tree, f, *args):
             visited[path[i]] = f(path[i], visited[path[i+1]], *args)
     return visited
 
+def truncate_path(path, score, threshold = 0.3):
+    truncated_path, truncated_score = [], []
+    for category, p in zip(path, score):
+        if p < threshold:
+            break
+        truncated_path.append(category)
+    return truncated_path, score[:len(truncated_path)]
+
 def increment_chain_len(_, parent_chain_len):
     if not parent_chain_len: return 1
     return parent_chain_len + 1
