@@ -34,17 +34,11 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
         self.bce = torch.nn.BCEWithLogitsLoss(reduction='none')
         self.blah = 0
         self.shape_counter = {}
+        self.model = model
         """Initialize v8DetectionLoss with model parameters and task-aligned assignment settings."""
 
     def __call__(self, preds, batch):
         """Calculate the sum of the loss for box, cls and dfl multiplied by batch size."""
-        ultralytics.utils.LOGGER.info("preds")
-        ultralytics.utils.LOGGER.info(len(preds))
-        for i, pred in enumerate(preds):
-          ultralytics.utils.LOGGER.info(preds[i].shape)
-          ultralytics.utils.LOGGER.info(preds[i])
-        ultralytics.utils.LOGGER.info("batch")
-        ultralytics.utils.LOGGER.info(batch)
         loss = torch.zeros(3, device=self.device)  # box, cls, dfl
         feats = preds[1] if isinstance(preds, tuple) else preds
         pred_distri, pred_scores = torch.cat([xi.view(feats[0].shape[0], self.no, -1) for xi in feats], 2).split(
@@ -54,9 +48,6 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
         pred_scores = pred_scores.permute(0, 2, 1).contiguous()
         pred_distri = pred_distri.permute(0, 2, 1).contiguous()
 
-        ultralytics.utils.LOGGER.info("pred_scores")
-        ultralytics.utils.LOGGER.info(pred_scores.shape)
-        ultralytics.utils.LOGGER.info(pred_scores)
 
         dtype = pred_scores.dtype
         batch_size = pred_scores.shape[0]
@@ -105,6 +96,27 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
         target_vectors = target_scores.gather(dim=2, index=target_indices.unsqueeze(2)).squeeze(2)
         flat_mask = self.hierarchy_mask[target_indices]
         unnormalized_loss = hierarchical_loss(masked_hierarchical_scores, target_vectors, ~flat_mask)
+
+
+        if batch['im_file'][0] == 'home/noaa_brown/hierarchical_yolo/data/download/yolo_training_data/annotations/images/20190924_185548_20190924.191252.539.011821.jpg':
+          ultralytics.utils.LOGGER.info("pred_scores")
+          ultralytics.utils.LOGGER.info(pred_scores.shape)
+          ultralytics.utils.LOGGER.info(pred_scores)
+          ultralytics.utils.LOGGER.info("preds")
+          ultralytics.utils.LOGGER.info(len(preds))
+          for i, pred in enumerate(preds):
+            ultralytics.utils.LOGGER.info(preds[i].shape)
+            ultralytics.utils.LOGGER.info(preds[i])
+          ultralytics.utils.LOGGER.info("batch")
+          ultralytics.utils.LOGGER.info(batch)
+          ultralytics.utils.LOGGER.info('target_scores')
+          ultralytics.utils.LOGGER.info(target_scores.shape)
+          ultralytics.utils.LOGGER.info(target_scores)
+
+
+
+
+
  
         loss[1] = unnormalized_loss.sum() / target_scores_sum
 
