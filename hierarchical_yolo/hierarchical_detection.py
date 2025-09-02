@@ -41,7 +41,6 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
         ultralytics.utils.LOGGER.info(len(preds))
         ultralytics.utils.LOGGER.info(preds[0].shape)
         ultralytics.utils.LOGGER.info(preds[0])
-        ultralytics.utils.LOGGER.info(batch.shape)
         ultralytics.utils.LOGGER.info(batch)
         loss = torch.zeros(3, device=self.device)  # box, cls, dfl
         feats = preds[1] if isinstance(preds, tuple) else preds
