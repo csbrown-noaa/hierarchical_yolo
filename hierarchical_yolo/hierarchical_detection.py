@@ -103,7 +103,7 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
             ultralytics.utils.LOGGER.info(batch['im_file'][i])
             ultralytics.utils.LOGGER.info('20190925_183834_20190925.185122.879.008705s.jpg' in batch['im_file'][i])
             break
-        if batch['im_file'][i] == 'home/noaa_brown/hierarchical_yolo/data/download/yolo_training_data/annotations/images/20190925_183834_20190925.185122.879.008705s.jpg':
+        if '20190925_183834_20190925.185122.879.008705s.jpg' in batch['im_file'][i]:
           ultralytics.utils.LOGGER.info("pred_scores")
           ultralytics.utils.LOGGER.info(pred_scores.shape)
           ultralytics.utils.LOGGER.info(pred_scores)
