@@ -31,7 +31,7 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
         self.parent_tensor = build_parent_tensor(hierarchy, self.device)
         self.sibling_mask = build_hierarchy_sibling_mask(self.parent_tensor, self.device)
 
-        self.bce2 = torch.nn.BCEWithLogitsLoss(reduction='sum')
+        self.bce = torch.nn.BCEWithLogitsLoss(reduction='none')
         self.blah = 0
         self.shape_counter = {}
         """Initialize v8DetectionLoss with model parameters and task-aligned assignment settings."""
