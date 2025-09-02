@@ -98,7 +98,8 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
         unnormalized_loss = hierarchical_loss(masked_hierarchical_scores, target_vectors, ~flat_mask)
 
 
-        if batch['im_file'][0] == 'home/noaa_brown/hierarchical_yolo/data/download/yolo_training_data/annotations/images/20190924_185548_20190924.191252.539.011821.jpg':
+        #ultralytics.utils.LOGGER.info(batch['im_file'][0])
+        if batch['im_file'][0] == 'home/noaa_brown/hierarchical_yolo/data/download/yolo_training_data/annotations/images/20190925_183834_20190925.185122.879.008705s.jpg':
           ultralytics.utils.LOGGER.info("pred_scores")
           ultralytics.utils.LOGGER.info(pred_scores.shape)
           ultralytics.utils.LOGGER.info(pred_scores)
@@ -112,9 +113,6 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
           ultralytics.utils.LOGGER.info('target_scores')
           ultralytics.utils.LOGGER.info(target_scores.shape)
           ultralytics.utils.LOGGER.info(target_scores)
-
-
-
 
 
  
