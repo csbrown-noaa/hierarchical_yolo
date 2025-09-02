@@ -48,7 +48,6 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
         pred_scores = pred_scores.permute(0, 2, 1).contiguous()
         pred_distri = pred_distri.permute(0, 2, 1).contiguous()
 
-
         dtype = pred_scores.dtype
         batch_size = pred_scores.shape[0]
         imgsz = torch.tensor(feats[0].shape[2:], device=self.device, dtype=dtype) * self.stride[0]  # image size (h,w)
@@ -109,9 +108,6 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
           ultralytics.utils.LOGGER.info(pred_scores)
           ultralytics.utils.LOGGER.info("preds")
           ultralytics.utils.LOGGER.info(len(preds))
-          for j, pred in enumerate(preds):
-            ultralytics.utils.LOGGER.info(preds[j].shape)
-            ultralytics.utils.LOGGER.info(preds[j])
           ultralytics.utils.LOGGER.info("batch")
           ultralytics.utils.LOGGER.info(batch)
           ultralytics.utils.LOGGER.info('target_scores')
