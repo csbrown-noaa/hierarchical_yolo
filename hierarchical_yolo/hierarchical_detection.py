@@ -38,10 +38,13 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
 
     def __call__(self, preds, batch):
         """Calculate the sum of the loss for box, cls and dfl multiplied by batch size."""
-        #ultralytics.utils.LOGGER.info(len(preds))
-        #ultralytics.utils.LOGGER.info(preds[0].shape)
-        #ultralytics.utils.LOGGER.info(preds[0])
-        #ultralytics.utils.LOGGER.info(batch)
+        ultralytics.utils.LOGGER.info("preds")
+        ultralytics.utils.LOGGER.info(len(preds))
+        for i, pred in preds:
+          ultralytics.utils.LOGGER.info(preds[i].shape)
+          ultralytics.utils.LOGGER.info(preds[i])
+        ultralytics.utils.LOGGER.info("batch")
+        ultralytics.utils.LOGGER.info(batch)
         loss = torch.zeros(3, device=self.device)  # box, cls, dfl
         feats = preds[1] if isinstance(preds, tuple) else preds
         pred_distri, pred_scores = torch.cat([xi.view(feats[0].shape[0], self.no, -1) for xi in feats], 2).split(
@@ -51,6 +54,7 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
         pred_scores = pred_scores.permute(0, 2, 1).contiguous()
         pred_distri = pred_distri.permute(0, 2, 1).contiguous()
 
+        ultralytics.utils.LOGGER.info("pred_scores")
         ultralytics.utils.LOGGER.info(pred_scores.shape)
         ultralytics.utils.LOGGER.info(pred_scores)
 
