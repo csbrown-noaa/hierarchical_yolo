@@ -16,7 +16,11 @@ def stable_chained_bce(logits: torch.Tensor, target: torch.Tensor, hierarchy) ->
     log_one_minus_p_hat = torch.log1p(-torch.exp(log_p_hat))
     return -target * log_p_hat - (1 - target) * log_one_minus_p_hat
 
-
+PSCORES = None
+BBOXES = None
+IMG = None
+TSCORES = None
+TBOXES = None
 class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
     """Criterion class for computing training losses for YOLOv8 object detection."""
 
@@ -64,6 +68,7 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
         # dfl_conf = pred_distri.view(batch_size, -1, 4, self.reg_max).detach().softmax(-1)
         # dfl_conf = (dfl_conf.amax(-1).mean(-1) + dfl_conf.amax(-1).amin(-1)) / 2
 
+        # TODO! When figuring out the target scores here, do we need to do anything to the pred_scores??
         _, target_bboxes, target_scores, fg_mask, _ = self.assigner(
             # pred_scores.detach().sigmoid() * 0.8 + dfl_conf.unsqueeze(-1) * 0.2,
             pred_scores.detach().sigmoid(),
@@ -113,7 +118,11 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
           ultralytics.utils.LOGGER.info('target_scores')
           ultralytics.utils.LOGGER.info(target_scores.shape)
           ultralytics.utils.LOGGER.info(target_scores)
-
+          PSCORES = pred_scores
+          BBOXES = pred_bboxes
+          IMG = batch['img']
+          TSCORES = target_scores
+          TBOXES = target_bboxes
 
  
         loss[1] = unnormalized_loss.sum() / target_scores_sum
