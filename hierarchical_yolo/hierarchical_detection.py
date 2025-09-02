@@ -88,9 +88,9 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
         masked_hierarchical_scores = hierarchically_index_flat_scores(pred_scores, target_indices, self.hierarchy_index_tensor, self.hierarchy_mask, device=self.device)
         #ultralytics.utils.LOGGER.info(target_scores.shape)
         #ultralytics.utils.LOGGER.info(target_indices.shape)
-        ultralytics.utils.LOGGER.info("pred_scores raw")
-        ultralytics.utils.LOGGER.info(pred_scores.shape)
-        ultralytics.utils.LOGGER.info(pred_scores)
+        #ultralytics.utils.LOGGER.info("pred_scores raw")
+        #ultralytics.utils.LOGGER.info(pred_scores.shape)
+        #ultralytics.utils.LOGGER.info(pred_scores)
         target_vectors = target_scores.gather(dim=2, index=target_indices.unsqueeze(2)).squeeze(2)
         flat_mask = self.hierarchy_mask[target_indices]
         unnormalized_loss = hierarchical_loss(masked_hierarchical_scores, target_vectors, ~flat_mask)
