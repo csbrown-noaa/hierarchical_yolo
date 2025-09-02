@@ -109,9 +109,9 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
           ultralytics.utils.LOGGER.info(pred_scores)
           ultralytics.utils.LOGGER.info("preds")
           ultralytics.utils.LOGGER.info(len(preds))
-          for i, pred in enumerate(preds):
-            ultralytics.utils.LOGGER.info(preds[i].shape)
-            ultralytics.utils.LOGGER.info(preds[i])
+          for j, pred in enumerate(preds):
+            ultralytics.utils.LOGGER.info(preds[j].shape)
+            ultralytics.utils.LOGGER.info(preds[j])
           ultralytics.utils.LOGGER.info("batch")
           ultralytics.utils.LOGGER.info(batch)
           ultralytics.utils.LOGGER.info('target_scores')
