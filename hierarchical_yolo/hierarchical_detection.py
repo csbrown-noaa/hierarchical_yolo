@@ -40,7 +40,7 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
         """Calculate the sum of the loss for box, cls and dfl multiplied by batch size."""
         ultralytics.utils.LOGGER.info("preds")
         ultralytics.utils.LOGGER.info(len(preds))
-        for i, pred in preds:
+        for i, pred in enumerate(preds):
           ultralytics.utils.LOGGER.info(preds[i].shape)
           ultralytics.utils.LOGGER.info(preds[i])
         ultralytics.utils.LOGGER.info("batch")
