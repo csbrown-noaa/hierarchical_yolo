@@ -71,6 +71,11 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
         # TODO! When figuring out the target scores here, do we need to do anything to the pred_scores??
         logsigmoid_pred_scores = torch.nn.LogSigmoid()(pred_scores)
         hierarchical_pred_scores = accumulate_hierarchy(logsigmoid_pred_scores, self.hierarchy_index_tensor, cumulative_op=torch.cumsum)
+        ultralytics.utils.LOGGER.info("hierarchical scores vs flat scores")
+        ultralytics.utils.LOGGER.info(torch.exp(hierarchical_pred_scores).shape)
+        ultralytics.utils.LOGGER.info(pred_scores.sigmoid().shape)
+        ultralytics.utils.LOGGER.info(torch.exp(hierarchical_pred_scores))
+        ultralytics.utils.LOGGER.info(pred_scores.sigmoid())
         #####
 
         _, target_bboxes, target_scores, fg_mask, _ = self.assigner(
