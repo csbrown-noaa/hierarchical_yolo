@@ -313,7 +313,7 @@ def get_roots(tree):
 def postprocess_raw_output(raw_yolo_output, hierarchy):
     all_boxes = []
     all_class_scores = []
-    _, nms_idxs = ultralytics.utils.ops.non_max_suppression(raw_yolo_output, classes=get_roots(hierarchy), return_idxs=True, iou_thres=0.8)
+    _, nms_idxs = ultralytics.utils.ops.non_max_suppression(raw_yolo_output, classes=get_roots(hierarchy), return_idxs=True, iou_thres=0.8, conf_thres=0.5)
     for i, idx in enumerate(nms_idxs):
         #print(idx)
         try:
