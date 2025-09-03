@@ -1,5 +1,6 @@
 import ultralytics
 import torch
+from typing import Callable
 
 def log_matrix(m):
     formatted_lines = []
@@ -167,6 +168,196 @@ def build_hierarchy_index_tensor(hierarchy, device=None):
     index_tensor = torch.full((len(lens), max(lens.values())), -1, dtype=torch.int32, device=device)
     preorder_apply(hierarchy, set_indices, index_tensor)
     return index_tensor
+
+
+def accumulate_hierarchy(
+    predictions: torch.Tensor,
+    hierarchy_index: torch.Tensor,
+    cumulative_op: Callable[[torch.Tensor, int], torch.Tensor],
+) -> torch.Tensor:
+    """Performs a cumulative operation along a hierarchical structure.
+
+    This function applies a cumulative operation (e.g., `torch.cumsum`) along
+    each ancestral path in a hierarchy. The implementation is fully vectorized,
+    avoiding Python loops for performance. It first gathers the initial values
+    for all nodes along each path, applies the cumulative operation, and then
+    selects the final accumulated value for each node.
+
+    For associative operations like `torch.cumsum` and `torch.cumprod`, this
+    produces the same result as a level-by-level iterative approach.
+
+    Parameters
+    ----------
+    predictions : torch.Tensor
+        A tensor of shape `[B, D, N]`, where `B` is the batch size, `D` is the
+        number of detections, and `N` is the number of classes.
+    hierarchy_index : torch.Tensor
+        An int tensor of shape `[N, M]` encoding the hierarchy, where `N` is the
+        number of classes and `M` is the maximum hierarchy depth. Each row `i`
+        contains the path from node `i` to its root. Parent node IDs are to
+        the right of child node IDs. A value of -1 is used for padding.
+    cumulative_op : callable
+        A function that performs a cumulative operation along a dimension,
+        such as `torch.cumsum` or `torch.cumprod`. It must accept a tensor
+        and a `dim` argument.
+
+    Returns
+    -------
+    torch.Tensor
+        A new tensor with the same shape as `predictions` containing the
+        accumulated values.
+
+    Examples
+    --------
+    >>> import torch
+    >>> hierarchy_index = torch.tensor([
+    ...     [ 0,  1,  2],
+    ...     [ 1,  2, -1],
+    ...     [ 2, -1, -1],
+    ...     [ 3,  4, -1],
+    ...     [ 4, -1, -1]
+    ... ], dtype=torch.int64)
+    >>> # Predictions for 5 classes: [0., 10., 20., 30., 40.]
+    >>> predictions = torch.arange(0, 50, 10, dtype=torch.float32).view(1, 1, 5)
+    >>> # Perform a cumulative sum
+    >>> cumsum_preds = accumulate_hierarchy(predictions, hierarchy_index, torch.cumsum)
+    >>> print(cumsum_preds.squeeze())
+    tensor([30., 30., 20., 70., 40.])
+    """
+    if hierarchy_index.numel() == 0:
+        return predictions.clone()
+
+    B, D, N = predictions.shape
+    M = hierarchy_index.shape[1]
+
+    # 1. GATHER: Collect prediction values for each node in each path.
+    # Create a mask for valid indices (non -1)
+    valid_mask = hierarchy_index != -1
+
+    # Create a "safe" index tensor to prevent out-of-bounds errors from -1.
+    # We replace -1 with a valid index (e.g., 0) and will zero out its
+    # contribution later using the mask.
+    safe_index = hierarchy_index.masked_fill(~valid_mask, 0)
+
+    # Use advanced indexing to gather values. `predictions[:, :, safe_index]`
+    # creates a tensor of shape [B, D, N, M].
+    path_values = predictions[:, :, safe_index]
+
+    # Zero out the values from padded (-1) indices.
+    path_values = path_values * valid_mask.to(path_values.dtype)
+
+    # 2. ACCUMULATE: Apply the cumulative operation along the path dimension.
+    accumulated_paths = cumulative_op(path_values, -1)
+
+    # 3. SELECT: The final value for each node is the last valid accumulated
+    # value in its path.
+    # Find the length of each path to get the index of the last valid element.
+    path_lengths = valid_mask.sum(dim=1)
+    # Clamp to prevent index -1 for empty paths (should not happen with valid input).
+    end_indices = (path_lengths - 1).clamp(min=0)
+
+    # Reshape indices to be compatible with torch.gather.
+    end_indices = end_indices.view(1, 1, N, 1).expand(B, D, -1, -1)
+
+    # Gather the final accumulated value for each node from its path.
+    final_values = torch.gather(accumulated_paths, -1, end_indices).squeeze(-1)
+
+    return final_values
+
+
+ef accumulate_hierarchy(
+    predictions: torch.Tensor,
+    hierarchy_index: torch.Tensor,
+    cumulative_op: Callable[[torch.Tensor, int], torch.Tensor],
+) -> torch.Tensor:
+    """Performs a cumulative operation along a hierarchical structure.
+
+    This function applies a cumulative operation (e.g., `torch.cumsum`) along
+    each ancestral path in a hierarchy. The implementation is fully vectorized,
+    avoiding Python loops for performance. It first gathers the initial values
+    for all nodes along each path, applies the cumulative operation, and then
+    selects the final accumulated value for each node.
+
+    For associative operations like `torch.cumsum` and `torch.cumprod`, this
+    produces the same result as a level-by-level iterative approach.
+
+    Parameters
+    ----------
+    predictions : torch.Tensor
+        A tensor of shape `[B, D, N]`, where `B` is the batch size, `D` is the
+        number of detections, and `N` is the number of classes.
+    hierarchy_index : torch.Tensor
+        An int tensor of shape `[N, M]` encoding the hierarchy, where `N` is the
+        number of classes and `M` is the maximum hierarchy depth. Each row `i`
+        contains the path from node `i` to its root. Parent node IDs are to
+        the right of child node IDs. A value of -1 is used for padding.
+    cumulative_op : callable
+        A function that performs a cumulative operation along a dimension,
+        such as `torch.cumsum` or `torch.cumprod`. It must accept a tensor
+        and a `dim` argument.
+
+    Returns
+    -------
+    torch.Tensor
+        A new tensor with the same shape as `predictions` containing the
+        accumulated values.
+
+    Examples
+    --------
+    >>> import torch
+    >>> hierarchy_index = torch.tensor([
+    ...     [ 0,  1,  2],
+    ...     [ 1,  2, -1],
+    ...     [ 2, -1, -1],
+    ...     [ 3,  4, -1],
+    ...     [ 4, -1, -1]
+    ... ], dtype=torch.int64)
+    >>> # Predictions for 5 classes: [0., 10., 20., 30., 40.]
+    >>> predictions = torch.arange(0, 50, 10, dtype=torch.float32).view(1, 1, 5)
+    >>> # Perform a cumulative sum
+    >>> cumsum_preds = accumulate_hierarchy(predictions, hierarchy_index, torch.cumsum)
+    >>> print(cumsum_preds.squeeze())
+    tensor([30., 30., 20., 70., 40.])
+    """
+    B, D, N = predictions.shape
+    M = hierarchy_index.shape[1]
+
+    # 1. GATHER: Collect prediction values for each node in each path.
+    # Create a mask for valid indices (non -1)
+    valid_mask = hierarchy_index != -1
+
+    # Create a "safe" index tensor to prevent out-of-bounds errors from -1.
+    # We replace -1 with a valid index (e.g., 0) and will zero out its
+    # contribution later using the mask.
+    safe_index = hierarchy_index.masked_fill(~valid_mask, 0)
+
+    # Use advanced indexing to gather values. `predictions[:, :, safe_index]`
+    # creates a tensor of shape [B, D, N, M].
+    path_values = predictions[:, :, safe_index]
+
+    # Zero out the values from padded (-1) indices.
+    path_values = path_values * valid_mask.to(path_values.dtype)
+
+    # 2. ACCUMULATE: Apply the cumulative operation along the path dimension.
+    accumulated_paths = cumulative_op(path_values, -1)
+
+    # 3. SELECT: The final value for each node is the last valid accumulated
+    # value in its path.
+    # Find the length of each path to get the index of the last valid element.
+    path_lengths = valid_mask.sum(dim=1)
+    end_indices = path_lengths - 1
+
+    # Reshape indices to be compatible with torch.gather.
+    end_indices = end_indices.view(1, 1, N, 1).expand(B, D, -1, -1)
+
+    # Gather the final accumulated value for each node from its path.
+    final_values = torch.gather(accumulated_paths, -1, end_indices).squeeze(-1)
+
+    return final_values
+
+
+
+
 
 def hierarchically_index_flat_scores(flat_scores, target_indices, hierarchy_index_tensor, hierarchy_mask, device=None):
     '''
