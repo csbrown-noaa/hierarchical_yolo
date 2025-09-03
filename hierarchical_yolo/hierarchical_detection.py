@@ -74,8 +74,8 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
         ultralytics.utils.LOGGER.info("hierarchical scores vs flat scores")
         ultralytics.utils.LOGGER.info(torch.exp(hierarchical_pred_scores).shape)
         ultralytics.utils.LOGGER.info(pred_scores.sigmoid().shape)
-        ultralytics.utils.LOGGER.info(torch.exp(hierarchical_pred_scores))
-        ultralytics.utils.LOGGER.info(pred_scores.sigmoid())
+        ultralytics.utils.LOGGER.info(torch.exp(hierarchical_pred_scores[0,:2,:6]))
+        ultralytics.utils.LOGGER.info(pred_scores.sigmoid()[0,:2,:6])
         #####
 
         _, target_bboxes, target_scores, fg_mask, _ = self.assigner(
