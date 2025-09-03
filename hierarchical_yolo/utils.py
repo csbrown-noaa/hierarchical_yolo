@@ -265,7 +265,7 @@ def accumulate_hierarchy(
     return final_values
 
 
-ef accumulate_hierarchy(
+def accumulate_hierarchy(
     predictions: torch.Tensor,
     hierarchy_index: torch.Tensor,
     cumulative_op: Callable[[torch.Tensor, int], torch.Tensor],
