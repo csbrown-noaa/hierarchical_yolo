@@ -71,11 +71,6 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
         # TODO! When figuring out the target scores here, do we need to do anything to the pred_scores??
         logsigmoid_pred_scores = torch.nn.LogSigmoid()(pred_scores)
         hierarchical_pred_scores = accumulate_hierarchy(logsigmoid_pred_scores, self.hierarchy_index_tensor, cumulative_op=torch.cumsum)
-        ultralytics.utils.LOGGER.info("hierarchical scores vs flat scores")
-        ultralytics.utils.LOGGER.info(torch.exp(hierarchical_pred_scores).shape)
-        ultralytics.utils.LOGGER.info(pred_scores.sigmoid().shape)
-        ultralytics.utils.LOGGER.info(torch.exp(hierarchical_pred_scores[0,:2,:6]))
-        ultralytics.utils.LOGGER.info(pred_scores.sigmoid()[0,:2,:6])
         #####
 
         _, target_bboxes, target_scores, fg_mask, _ = self.assigner(
@@ -102,8 +97,19 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
 
         target_indices = torch.argmax(target_scores, dim=2)
         masked_hierarchical_scores = hierarchically_index_flat_scores(pred_scores, target_indices, self.hierarchy_index_tensor, self.hierarchy_mask, device=self.device)
+
+        tssum = target_scores.sum(dim=2)
+        sortedtssum, sortindices = tssum.sort(dim=1, descending=True)
+        bestts = sortindices[:4]
+        
+        ultralytics.utils.LOGGER.info("target scores")
         ultralytics.utils.LOGGER.info(target_scores.shape)
-        ultralytics.utils.LOGGER.info(target_scores[0,:2,:6])
+        ultralytics.utils.LOGGER.info(target_scores[0,bestts,:6])
+        ultralytics.utils.LOGGER.info("hierarchical scores vs flat scores")
+        ultralytics.utils.LOGGER.info(torch.exp(hierarchical_pred_scores).shape)
+        ultralytics.utils.LOGGER.info(pred_scores.sigmoid().shape)
+        ultralytics.utils.LOGGER.info(torch.exp(hierarchical_pred_scores[0,bestts,:6]))
+        ultralytics.utils.LOGGER.info(pred_scores.sigmoid()[0,bestts,:6])
         #ultralytics.utils.LOGGER.info(target_indices.shape)
         #ultralytics.utils.LOGGER.info("pred_scores raw")
         #ultralytics.utils.LOGGER.info(pred_scores.shape)
