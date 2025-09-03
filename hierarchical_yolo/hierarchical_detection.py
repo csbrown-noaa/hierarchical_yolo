@@ -102,7 +102,8 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
 
         target_indices = torch.argmax(target_scores, dim=2)
         masked_hierarchical_scores = hierarchically_index_flat_scores(pred_scores, target_indices, self.hierarchy_index_tensor, self.hierarchy_mask, device=self.device)
-        #ultralytics.utils.LOGGER.info(target_scores.shape)
+        ultralytics.utils.LOGGER.info(target_scores.shape)
+        ultralytics.utils.LOGGER.info(target_scores[0,:2,:6])
         #ultralytics.utils.LOGGER.info(target_indices.shape)
         #ultralytics.utils.LOGGER.info("pred_scores raw")
         #ultralytics.utils.LOGGER.info(pred_scores.shape)
