@@ -69,12 +69,14 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
         # dfl_conf = (dfl_conf.amax(-1).mean(-1) + dfl_conf.amax(-1).amin(-1)) / 2
 
         # TODO! When figuring out the target scores here, do we need to do anything to the pred_scores??
-        
+        logsigmoid_pred_scores = torch.nn.LogSigmoid()(pred_scores)
+        hierarchical_pred_scores = accumulate_hierarchy(logsigmoid_pred_scores, self.hierarchy_index_tensor, cumulative_op=torch.cumsum)
         #####
 
         _, target_bboxes, target_scores, fg_mask, _ = self.assigner(
             # pred_scores.detach().sigmoid() * 0.8 + dfl_conf.unsqueeze(-1) * 0.2,
-            pred_scores.detach().sigmoid(),
+            #pred_scores.detach().sigmoid(),
+            torch.exp(hierarchical_pred_scores),
             (pred_bboxes.detach() * stride_tensor).type(gt_bboxes.dtype),
             anchor_points * stride_tensor,
             gt_labels,
