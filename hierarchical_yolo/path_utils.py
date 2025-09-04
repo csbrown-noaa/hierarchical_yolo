@@ -263,10 +263,10 @@ def filter_empty_paths(predicted_boxes: torch.Tensor, predicted_paths: list[list
     >>> scores = [torch.tensor([0.9896]), torch.tensor([0.9246, 0.7684]), torch.tensor([0.8949, 0.8765]), torch.tensor([]), torch.tensor([])]
     >>> f_boxes, f_paths, f_scores = filter_empty_paths(boxes, paths, scores)
     >>> f_boxes
-    tensor([[482.27, 395.77, 241.98],
-            [  8.11, 156.87, 152.91],
-            [610.42, 429.38, 307.70],
-            [103.86, 200.93, 197.57]])
+    tensor([[482.2700, 395.7700, 241.9800],
+            [  8.1100, 156.8700, 152.9100],
+            [610.4200, 429.3800, 307.7000],
+            [103.8600, 200.9300, 197.5700]])
     >>> f_paths
     [[4], [4, 6], [4, 5]]
     >>> f_scores
@@ -313,10 +313,10 @@ def batch_filter_empty_paths(predicted_boxes: list[torch.Tensor], predicted_path
     >>> len(result)
     2
     >>> result[0][0] # boxes for first batch item
-    tensor([[482.27, 395.77, 241.98],
-            [  8.11, 156.87, 152.91],
-            [610.42, 429.38, 307.70],
-            [103.86, 200.93, 197.57]])
+    tensor([[482.2700, 395.7700, 241.9800],
+            [  8.1100, 156.8700, 152.9100],
+            [610.4200, 429.3800, 307.7000],
+            [103.8600, 200.9300, 197.5700]])
     >>> result[0][1] # paths for first batch item
     [[4], [4, 6], [4, 5]]
     """
