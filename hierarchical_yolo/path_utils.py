@@ -258,7 +258,6 @@ def filter_empty_paths(predicted_boxes: torch.Tensor, predicted_paths: list[list
     Examples
     --------
     >>> import torch
-    >>> torch.set_printoptions(precision=2)
     >>> boxes = torch.tensor([[482.27, 395.77, 241.98, 359.60, 258.38], [8.11, 156.87, 152.91, 335.40, 24.81], [610.42, 429.38, 307.70, 382.68, 413.79], [103.86, 200.93, 197.57, 352.40, 197.61]])
     >>> paths = [[4], [4, 6], [4, 5], [], []]
     >>> scores = [torch.tensor([0.9896]), torch.tensor([0.9246, 0.7684]), torch.tensor([0.8949, 0.8765]), torch.tensor([]), torch.tensor([])]
@@ -307,7 +306,6 @@ def batch_filter_empty_paths(predicted_boxes: list[torch.Tensor], predicted_path
     Examples
     --------
     >>> import torch
-    >>> torch.set_printoptions(precision=2)
     >>> boxes_batch = [torch.tensor([[482.27, 395.77, 241.98, 359.60, 258.38], [8.11, 156.87, 152.91, 335.40, 24.81], [610.42, 429.38, 307.70, 382.68, 413.79], [103.86, 200.93, 197.57, 352.40, 197.61]]), torch.tensor([[482.27, 395.77, 241.98, 359.60, 258.38], [8.11, 156.87, 152.91, 335.40, 24.81], [610.42, 429.38, 307.70, 382.68, 413.79], [103.86, 200.93, 197.57, 352.40, 197.61]])]
     >>> paths_batch = [[[4], [4, 6], [4, 5], [], []], [[4], [4, 6], [4, 5], [], []]]
     >>> scores_batch = [[torch.tensor([0.9896]), torch.tensor([0.9246, 0.7684]), torch.tensor([0.8949, 0.8765]), torch.tensor([]), torch.tensor([])], [torch.tensor([0.9896]), torch.tensor([0.9246, 0.7684]), torch.tensor([0.8949, 0.8765]), torch.tensor([]), torch.tensor([])]]
