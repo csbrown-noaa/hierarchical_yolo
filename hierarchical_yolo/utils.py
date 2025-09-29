@@ -381,11 +381,11 @@ def expand_target_hierarchy(
     >>> target = torch.tensor([0.4, 0., 0., 0., 0.]).view(1, 1, 5)
     >>> expanded_target = expand_target_hierarchy(target, hierarchy_index)
     >>> print(expanded_target.squeeze())
-    tensor([0.4, 0.4, 0.4, 0., 0.])
+    tensor([0.4000, 0.4000, 0.4000, 0.0000, 0.0000])
     >>> target = torch.tensor([0., 0., 0., 0.3, 0.]).view(1, 1, 5)
     >>> expanded_target = expand_target_hierarchy(target, hierarchy_index)
     >>> print(expanded_target.squeeze())
-    tensor([0., 0., 0., 0.3, 0.3])
+    tensor([0.0000, 0.0000, 0.0000, 0.3000, 0.3000])
     """
     B, D, N = target.shape
     M = hierarchy_index.shape[1]
