@@ -73,6 +73,10 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
         hierarchical_pred_scores = accumulate_hierarchy(logsigmoid_pred_scores, self.hierarchy_index_tensor, cumulative_op=torch.cumsum)
         #####
 
+        
+        ultralytics.utils.LOGGER.info("gt_labels")
+        ultralytics.utils.LOGGER.info(gt_labels)
+
         _, target_bboxes, target_scores, fg_mask, _ = self.assigner(
             # pred_scores.detach().sigmoid() * 0.8 + dfl_conf.unsqueeze(-1) * 0.2,
             #pred_scores.detach().sigmoid(),
