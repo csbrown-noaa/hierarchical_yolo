@@ -170,6 +170,7 @@ def build_hierarchy_index_tensor(hierarchy, device=None):
     return index_tensor
 
 
+# TODO! The `cumsum` implementation here doesn't make sense since we only take the last value... just have this do a sum.
 def accumulate_hierarchy(
     predictions: torch.Tensor,
     hierarchy_index: torch.Tensor,
@@ -418,7 +419,7 @@ def expand_target_hierarchy(
 
 def hierarchical_loss2(pred, targets, hierarchy_index):
     logsigmoids = torch.nn.functional.logsigmoid(pred)
-    hierarchical_summed_logsigmoids = accumulate_hierarchy(pred, hierarchy_index)
+    hierarchical_summed_logsigmoids = accumulate_hierarchy(pred, hierarchy_index, torch.cumsum)
     hierarchical_expanded_targets = expand_target_hierarchy(targets, hierarchy_index)
     hierarchical_summed_log1sigmoids = log1mexp(hierarchical_summed_logsigmoids)
     return -(
