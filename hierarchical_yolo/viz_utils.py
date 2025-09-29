@@ -43,6 +43,11 @@ def draw_boxes_on_image(pil_img, boxes, labels=None, scores=None, box_color=(0, 
     """
     img_cv = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
 
+    img_area = pil_img.size[::-1][0] * pil_img.size[::-1][1]
+    expected_area = 1080*1920
+    area_scale_factor = 4 * img_area / expected_area 
+
+
     for i, box in enumerate(boxes):
         #box = xywh2xyxy(box.clone())
         box = rescale_boxes(box.clone(), scaled, pil_img.size[::-1])
@@ -57,7 +62,7 @@ def draw_boxes_on_image(pil_img, boxes, labels=None, scores=None, box_color=(0, 
             label_text += f' {scores[i]:.2f}' if label_text else f'{scores[i]:.2f}'
 
         if label_text:
-            cv2.putText(img_cv, label_text, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, text_color, 2)
+            cv2.putText(img_cv, label_text, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, area_scale_factor, text_color, 2)
 
     return Image.fromarray(cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB))
 
