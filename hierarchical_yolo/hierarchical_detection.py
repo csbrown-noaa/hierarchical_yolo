@@ -1,6 +1,7 @@
 from copy import copy
 import ultralytics
 import ultralytics.utils.loss
+import ultralytics.models.yolo.detect
 import torch
 from .utils import *
 
