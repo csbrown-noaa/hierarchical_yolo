@@ -292,17 +292,18 @@ def hierarchically_index_flat_scores(flat_scores, target_indices, hierarchy_inde
 
 def hierarchical_loss(hierarchical_predictions, targets, mask):
     logsigmoids = torch.nn.functional.logsigmoid(hierarchical_predictions) * mask
-    ultralytics.utils.LOGGER.info(logsigmoids.shape)
-    ultralytics.utils.LOGGER.info(logsigmoids)
+    #ultralytics.utils.LOGGER.info(logsigmoids.shape)
+    #ultralytics.utils.LOGGER.info(logsigmoids)
     summed_logsigmoids = torch.sum(logsigmoids, dim=2)
-    ultralytics.utils.LOGGER.info(summed_logsigmoids.shape)
-    ultralytics.utils.LOGGER.info(summed_logsigmoids)
+    #ultralytics.utils.LOGGER.info(summed_logsigmoids.shape)
+    #ultralytics.utils.LOGGER.info(summed_logsigmoids)
+    # this sequence isn't numerically stable....
     exp_summed_logsigmoids = torch.exp(summed_logsigmoids)
-    ultralytics.utils.LOGGER.info(exp_summed_logsigmoids.shape)
-    ultralytics.utils.LOGGER.info(exp_summed_logsigmoids)
+    #ultralytics.utils.LOGGER.info(exp_summed_logsigmoids.shape)
+    #ultralytics.utils.LOGGER.info(exp_summed_logsigmoids)
     log1sigmoids = torch.log1p(-exp_summed_logsigmoids)
-    ultralytics.utils.LOGGER.info(log1sigmoids.shape)
-    ultralytics.utils.LOGGER.info(log1sigmoids)
+    #ultralytics.utils.LOGGER.info(log1sigmoids.shape)
+    #ultralytics.utils.LOGGER.info(log1sigmoids)
     return -(targets * summed_logsigmoids + (1 - targets) * log1sigmoids)
 
 def get_roots(tree):
