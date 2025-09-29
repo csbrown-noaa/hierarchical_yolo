@@ -340,6 +340,86 @@ def log1mexp(x: torch.Tensor) -> torch.Tensor:
     return torch.where(x > threshold, result_close_to_zero, result_far_from_zero)
 
 
+def expand_target_hierarchy(
+    target: torch.Tensor, hierarchy_index: torch.Tensor
+) -> torch.Tensor:
+    """Expands a one-hot target tensor up the hierarchy.
+
+    This function takes a target tensor that is "one-hot" along the class
+    dimension (i.e., contains a single non-zero value) and propagates that
+    value to all ancestors of the target class. The implementation is fully
+    vectorized.
+
+    Parameters
+    ----------
+    target : torch.Tensor
+        A tensor of shape `[B, D, N]`, where `B` is the batch size, `D` is the
+        number of detections, and `N` is the number of classes. It is assumed
+        to be one-hot along the last dimension.
+    hierarchy_index : torch.Tensor
+        An int tensor of shape `[N, M]` encoding the hierarchy, where `N` is the
+        number of classes and `M` is the maximum hierarchy depth. Each row `i`
+        contains the path from node `i` to its root.
+
+    Returns
+    -------
+    torch.Tensor
+        A new tensor with the same shape as `target` where the target value has
+        been propagated up the hierarchy.
+
+    Examples
+    --------
+    >>> import torch
+    >>> hierarchy_index = torch.tensor([
+    ...     [ 0,  1,  2],
+    ...     [ 1,  2, -1],
+    ...     [ 2, -1, -1],
+    ...     [ 3,  4, -1],
+    ...     [ 4, -1, -1]
+    ... ], dtype=torch.int64)
+    >>> # Target is one-hot at index 0
+    >>> target = torch.tensor([0.4, 0., 0., 0., 0.]).view(1, 1, 5)
+    >>> expanded_target = expand_target_hierarchy(target, hierarchy_index)
+    >>> print(expanded_target.squeeze())
+    tensor([0.4, 0.4, 0.4, 0., 0.])
+    >>> target = torch.tensor([0., 0., 0., 0.3, 0.]).view(1, 1, 5)
+    >>> expanded_target = expand_target_hierarchy(target, hierarchy_index)
+    >>> print(expanded_target.squeeze())
+    tensor([0., 0., 0., 0.3, 0.3])
+    """
+    B, D, N = target.shape
+    M = hierarchy_index.shape[1]
+
+    # Find the single non-zero value and its index in the target tensor.
+    hot_value, hot_index = torch.max(target, dim=-1)
+
+    # Gather the ancestral paths corresponding to the hot indices.
+    # The shape will be [B, D, M].
+    paths = hierarchy_index[hot_index]
+
+    # Create a mask for valid indices (non -1) to handle padded paths.
+    valid_mask = paths != -1
+
+    # Create a "safe" index tensor to prevent out-of-bounds errors from -1.
+    # We replace -1 with a valid index (e.g., 0) and will zero out its
+    # contribution later using a masked source.
+    safe_paths = paths.masked_fill(~valid_mask, 0)
+
+    # Prepare the source tensor for the scatter operation.
+    # It should have the same value (`hot_value`) for all valid path members.
+    src_values = hot_value.unsqueeze(-1).expand(-1, -1, M)
+    masked_src = src_values * valid_mask.to(src_values.dtype)
+
+    # Create an output tensor and scatter the hot value into all ancestral positions.
+    expanded_target = torch.zeros_like(target)
+    expanded_target.scatter_(dim=-1, index=safe_paths, src=masked_src)
+
+    return expanded_target
+
+def hierarchical_loss2(pred, targets, hierarchy_index):
+    logsigmoids = toorch.nn.functional.logsigmoid(pred)
+    hierarchical_summed_logsigmoids = accumulate_hierarchy(pred, hierarchy_index)
+
 
 # TODO! This is broke.  It doesn't even touch the predictions out of the un-targeted hierarchy...
 def hierarchical_loss(hierarchical_predictions, targets, mask):
