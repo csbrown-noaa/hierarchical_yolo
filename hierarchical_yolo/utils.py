@@ -291,7 +291,6 @@ def hierarchically_index_flat_scores(flat_scores, target_indices, hierarchy_inde
 
 
 def hierarchical_loss(hierarchical_predictions, targets, mask):
-    ''' TODO: This is broken!  We have to softmax over SIBLINGS, not the hierarchy! '''
     logsigmoids = torch.nn.functional.logsigmoid(hierarchical_predictions) * mask
     #ultralytics.utils.LOGGER.info(logsigmoids.shape)
     #ultralytics.utils.LOGGER.info(logsigmoids)
