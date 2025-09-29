@@ -58,9 +58,6 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
         anchor_points, stride_tensor = ultralytics.utils.tal.make_anchors(feats, self.stride, 0.5)
 
         # Targets
-        ultralytics.utils.LOGGER.info("batch cls")
-        ultralytics.utils.LOGGER.info(batch["cls"])
-
         targets = torch.cat((batch["batch_idx"].view(-1, 1), batch["cls"].view(-1, 1), batch["bboxes"]), 1)
         targets = self.preprocess(targets.to(self.device), batch_size, scale_tensor=imgsz[[1, 0, 1, 0]])
         gt_labels, gt_bboxes = targets.split((1, 4), 2)  # cls, xyxy
