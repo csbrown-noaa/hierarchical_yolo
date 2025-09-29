@@ -326,7 +326,8 @@ def log1mexp(x: torch.Tensor) -> torch.Tensor:
     >>> import torch
     >>> log_p = torch.tensor([-1e-9, -2.0, -20.0])
     >>> log1mexp(log_p)
-    tensor([-20.7233,  -0.1438,  -0.0000])
+    tensor([-2.0723e+01, -1.4541e-01, -2.0612e-09])
+
 
     """
     # The threshold is -ln(2) approx -0.7
