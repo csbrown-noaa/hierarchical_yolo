@@ -289,7 +289,58 @@ def hierarchically_index_flat_scores(flat_scores, target_indices, hierarchy_inde
 
     return masked_scores
 
+def log1mexp(x: torch.Tensor) -> torch.Tensor:
+    """Compute log(1 - exp(x)) in a numerically stable way.
 
+    This function is designed to prevent the loss of precision that occurs
+    when `x` is very close to zero (i.e., a small negative number).
+    Directly computing `log(1 - exp(x))` can lead to catastrophic
+    cancellation and result in `-inf`.
+
+    Parameters
+    ----------
+    x : torch.Tensor
+        Input tensor containing negative values (log-probabilities).
+        The function is not designed for `x >= 0`, as `1 - exp(x)` would be
+        zero or negative, making the logarithm undefined.
+
+    Returns
+    -------
+    torch.Tensor
+        The computed `log(1 - exp(x))` values, with the same shape as `x`.
+
+    Notes
+    -----
+    The function uses two different mathematical identities based on the
+    value of `x` to ensure stability:
+    
+    1. For `x > -ln(2)` (i.e., `x` is close to 0), it computes
+       `log(-expm1(x))`. The `torch.expm1(x)` function computes `exp(x) - 1`
+       with high precision, avoiding cancellation.
+    2. For `x <= -ln(2)`, `exp(x)` is small, so the expression `1 - exp(x)`
+       is not problematic. For better precision, `log1p(-exp(x))` is used,
+       where `torch.log1p(y)` computes `log(1 + y)`.
+
+    Examples
+    --------
+    >>> import torch
+    >>> log_p = torch.tensor([-1e-9, -2.0, -20.0])
+    >>> log1mexp(log_p)
+    tensor([-20.7233,  -0.1438,  -0.0000])
+
+    """
+    # The threshold is -ln(2) approx -0.7
+    threshold = -0.7
+    # For x > threshold, exp(x) is close to 1
+    result_close_to_zero = torch.log(-torch.expm1(x))
+    # For x <= threshold, exp(x) is small
+    result_far_from_zero = torch.log1p(-torch.exp(x))
+
+    return torch.where(x > threshold, result_close_to_zero, result_far_from_zero)
+
+
+
+# TODO! This is broke.  It doesn't even touch the predictions out of the un-targeted hierarchy...
 def hierarchical_loss(hierarchical_predictions, targets, mask):
     logsigmoids = torch.nn.functional.logsigmoid(hierarchical_predictions) * mask
     #ultralytics.utils.LOGGER.info(logsigmoids.shape)
