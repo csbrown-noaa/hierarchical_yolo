@@ -405,7 +405,7 @@ def expand_target_hierarchy(
     # We replace -1 with a valid index (e.g., 0) and will zero out its
     # contribution later using a masked source.
     safe_paths = paths.masked_fill(~valid_mask, 0)
-    safe_path_ints = safe_paths.to(torch.int64)
+    safe_paths_ints = safe_paths.to(torch.int64)
 
     # Prepare the source tensor for the scatter operation.
     # It should have the same value (`hot_value`) for all valid path members.
