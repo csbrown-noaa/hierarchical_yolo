@@ -423,7 +423,7 @@ def hierarchical_loss2(pred, targets, hierarchy_index):
     hierarchical_summed_log1sigmoids = log1mexp(hierarchical_summed_logsigmoids)
     return -(
       (hierarchical_expanded_targets * hierarchical_summed_logsigmoids) 
-      + (1 - hierarchical_expanded_targets) * hierarchical_summed_log1sigmoids)
+      + (1 - hierarchical_expanded_targets) * hierarchical_summed_log1sigmoids
     )
 
 # TODO! This is broke.  It doesn't even touch the predictions out of the un-targeted hierarchy...
