@@ -197,8 +197,8 @@ class TestHierarchicalIndex(unittest.TestCase):
 
     def test_hierarchical_loss2(self):
         tree = {0:1, 1:2, 3:4}
-        target = [0,1,0,0,0]
-        out = [-1,1,2,3,-1]
+        target = [0.,1.,0.,0.,0.]
+        out = [-1.,1.,2.,3.,-1.]
         expected_bce = [-0.19,-0.45,-0.13,-0.30,-0.31]
 
         hierarchy_index = hierarchical_yolo.utils.build_hierarchy_index_tensor(tree)
