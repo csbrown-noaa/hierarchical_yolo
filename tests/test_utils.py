@@ -208,7 +208,7 @@ class TestHierarchicalIndex(unittest.TestCase):
             hierarchy_index
         )
 
-        torch.testing.assert_close(expected_bce, actual_bce)
+        torch.testing.assert_close(torch.tensor([expected_bce]), actual_bce)
 
    
     ''' TODO! This requires postprocess_raw_output to take in nms parameters.  We generally need to hoist these out to be user-variables 
