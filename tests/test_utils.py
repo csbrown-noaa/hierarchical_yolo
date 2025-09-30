@@ -195,6 +195,21 @@ class TestHierarchicalIndex(unittest.TestCase):
 
         torch.testing.assert_close(alternate_loss, result)
 
+    def test_hierarchical_loss2():
+        tree = {0:1, 1:2, 3:4}
+        target = [0,1,0,0,0]
+        out = [-1,1,2,3,-1]
+        expected_bce = [-0.19,-0.45,-0.13,-0.30,-0.31]
+
+        hierarchy_index = build_hierarchy_index_tensor(tree)
+        actual_bce = hierarchical_loss2(
+            torch.tensor([out]),
+            torch.tensor([target]),
+            hierarchy_index
+        )
+
+        torch.testing.assert_close(expected_bce, actual_bce)
+
    
     ''' TODO! This requires postprocess_raw_output to take in nms parameters.  We generally need to hoist these out to be user-variables 
     def test_hierarchical_paths(self):
@@ -209,6 +224,7 @@ class TestHierarchicalIndex(unittest.TestCase):
                 expected_path_score = torch.tensor(expected_path_score, device=raw_output.device)
                 torch.testing.assert_close(expected_path_score, actual_path_score)
     '''
+
 
 
 def load_tests(loader, tests, ignore):
