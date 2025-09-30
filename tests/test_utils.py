@@ -195,7 +195,7 @@ class TestHierarchicalIndex(unittest.TestCase):
 
         torch.testing.assert_close(alternate_loss, result)
 
-    def test_hierarchical_loss2():
+    def test_hierarchical_loss2(self):
         tree = {0:1, 1:2, 3:4}
         target = [0,1,0,0,0]
         out = [-1,1,2,3,-1]
