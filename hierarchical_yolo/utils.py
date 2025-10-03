@@ -335,10 +335,8 @@ def log1mexp(x: torch.Tensor) -> torch.Tensor:
     threshold = -0.7
     # For x > threshold, exp(x) is close to 1
     result_close_to_zero = torch.log(-torch.expm1(x))
-    ultralytics.utils.LOGGER.info(result_close_to_zero)
     # For x <= threshold, exp(x) is small
     result_far_from_zero = torch.log1p(-torch.exp(x))
-    ultralytics.utils.LOGGER.info(result_far_from_zero)
 
     return torch.where(x > threshold, result_close_to_zero, result_far_from_zero)
 
@@ -422,13 +420,9 @@ def expand_target_hierarchy(
 
 def hierarchical_loss2(pred, targets, hierarchy_index):
     logsigmoids = torch.nn.functional.logsigmoid(pred)
-    ultralytics.utils.LOGGER.info(logsigmoids)
     hierarchical_summed_logsigmoids = accumulate_hierarchy(logsigmoids, hierarchy_index, torch.cumsum)
-    ultralytics.utils.LOGGER.info(hierarchical_summed_logsigmoids)
     hierarchical_expanded_targets = expand_target_hierarchy(targets, hierarchy_index)
-    ultralytics.utils.LOGGER.info(hierarchical_expanded_targets)
     hierarchical_summed_log1sigmoids = log1mexp(hierarchical_summed_logsigmoids)
-    ultralytics.utils.LOGGER.info(hierarchical_summed_log1sigmoids)
     return -(
       (hierarchical_expanded_targets * hierarchical_summed_logsigmoids) 
       + (1 - hierarchical_expanded_targets) * hierarchical_summed_log1sigmoids
