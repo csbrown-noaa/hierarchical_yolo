@@ -208,6 +208,10 @@ class TestHierarchicalIndex(unittest.TestCase):
             hierarchy_index
         )
 
+        print("bce")
+        print(expected_bce)
+        print(actual_bce)
+      
         torch.testing.assert_close(
             mock_batchify(torch.tensor([expected_bce])), 
             actual_bce
