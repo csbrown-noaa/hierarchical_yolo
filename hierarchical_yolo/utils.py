@@ -420,9 +420,13 @@ def expand_target_hierarchy(
 
 def hierarchical_loss2(pred, targets, hierarchy_index):
     logsigmoids = torch.nn.functional.logsigmoid(pred)
+    ultralytics.utils.LOGGER.info(logsigmoids)
     hierarchical_summed_logsigmoids = accumulate_hierarchy(pred, hierarchy_index, torch.cumsum)
+    ultralytics.utils.LOGGER.info(hierarchical_summed_logsigmoids)
     hierarchical_expanded_targets = expand_target_hierarchy(targets, hierarchy_index)
+    ultralytics.utils.LOGGER.info(hierarchical_expanded_targets)
     hierarchical_summed_log1sigmoids = log1mexp(hierarchical_summed_logsigmoids)
+    ultralytics.utils.LOGGER.info(hierarchical_summed_log1sigmoids)
     return -(
       (hierarchical_expanded_targets * hierarchical_summed_logsigmoids) 
       + (1 - hierarchical_expanded_targets) * hierarchical_summed_log1sigmoids
