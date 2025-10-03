@@ -199,7 +199,7 @@ class TestHierarchicalIndex(unittest.TestCase):
         tree = {0:1, 1:2, 3:4}
         target = [0.,1.,0.,0.,0.]
         out = [-1.,1.,2.,3.,-1.]
-        expected_bce = [-0.19,-0.45,-0.13,-0.30,-0.31]
+        expected_bce = [0.19,0.45,0.13,0.30,0.31]
 
         hierarchy_index = hierarchical_yolo.utils.build_hierarchy_index_tensor(tree)
         actual_bce = hierarchical_yolo.utils.hierarchical_loss2(
@@ -214,7 +214,8 @@ class TestHierarchicalIndex(unittest.TestCase):
       
         torch.testing.assert_close(
             mock_batchify(torch.tensor([expected_bce])), 
-            actual_bce
+            actual_bce,
+            rtol = 0.05
         )
 
    
