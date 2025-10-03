@@ -335,8 +335,10 @@ def log1mexp(x: torch.Tensor) -> torch.Tensor:
     threshold = -0.7
     # For x > threshold, exp(x) is close to 1
     result_close_to_zero = torch.log(-torch.expm1(x))
+    ultralytics.utils.LOGGER.info(result_close_to_zero)
     # For x <= threshold, exp(x) is small
     result_far_from_zero = torch.log1p(-torch.exp(x))
+    ultralytics.utils.LOGGER.info(result_far_from_zero)
 
     return torch.where(x > threshold, result_close_to_zero, result_far_from_zero)
 
