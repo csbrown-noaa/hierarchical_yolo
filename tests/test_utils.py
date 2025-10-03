@@ -215,6 +215,7 @@ class TestHierarchicalIndex(unittest.TestCase):
         torch.testing.assert_close(
             mock_batchify(torch.tensor([expected_bce])), 
             actual_bce,
+            atol = 0,
             rtol = 0.05
         )
 
