@@ -125,6 +125,49 @@ def build_hierarchy_sibling_mask(parent_tensor, device=None):
     return sibling_mask
 
 
+def hierarchy_logsigmoid_preds(flat_scores, hierarchy_index_tensor):
+    logsigmoid_pred_scores = torch.nn.LogSigmoid()(flat_scores)
+    return accumulate_hierarchy(logsigmoid_pred_scores, hierarchy_index_tensor, cumulative_op=torch.cumsum)
+
+def argmax_from_subset(scores, indices):
+    """
+    Finds the argmax from a subset of indices
+
+    The core operation is performed on the last dimension of the tensor
+
+    Parameters
+    ----------
+        scores (torch.Tensor): Tensor of scores with shape (*D, N).
+        indices (torch.Tensor): A 1D Tensor of viable indices with shape (K,).
+
+    Returns
+    ----------
+        torch.Tensor: A tensor of shape (*D) containing the argmax index.
+
+    Examples
+    ----------
+        >>> scores = torch.tensor([
+        ...         [10, 20, 30, 5, 40],
+        ...         [99, 88, 77, 66, 55]
+        ... ])
+        >>> indices = torch.tensor([0, 2, 4])
+        >>> argmax_from_subset(scores, indices)
+        tensor([4, 0])
+    """
+    # 1. Use advanced indexing to select the subset of scores.
+    # The ellipsis (...) selects all leading dimensions.
+    # The result `subset_scores` will have shape (*D, K).
+    subset_scores = scores[..., indices]
+
+    # 2. Find the argmax within this subset along the last dimension.
+    # The result `local_argmax_indices` will have shape (*D).
+    local_argmax_indices = torch.argmax(subset_scores, dim=-1)
+
+    # 3. Use the local argmaxes to index directly into the original 1D `indices`.
+    # This is the simplest and most efficient step.
+    return indices[local_argmax_indices]
+
+
 def logsumexp_over_siblings(flat_scores, sibling_mask):
     '''
     Parameters
@@ -155,7 +198,8 @@ def build_hierarchy_index_tensor(hierarchy, device=None):
     '''
     Translate a hierarchy into a tensor representation.  Parent node ids are to the right of a node.  -1 is always to the right of roots or -1s.
 
-    Example:
+    Examples
+    ----------
     >>> hierarchy = {0:1, 1:2, 3:4}
     >>> build_hierarchy_index_tensor(hierarchy)
     tensor([[ 0,  1,  2],
@@ -260,9 +304,6 @@ def accumulate_hierarchy(
     final_values = torch.gather(accumulated_paths, -1, end_indices).squeeze(-1)
 
     return final_values
-
-
-
 
 
 def hierarchically_index_flat_scores(flat_scores, target_indices, hierarchy_index_tensor, hierarchy_mask, device=None):
@@ -550,6 +591,43 @@ def yolo_raw_predict(model, images, shape, cuda=False):
     return raw_output
 
 def hierarchical_predict(model, hierarchy, images, shape=(640,640), cuda=False):
+    """
+    Performs hierarchical prediction on a batch of images using a trained YOLO model.
+
+    This function takes a standard YOLO model trained on a flat set of classes
+    and applies a hierarchical structure to its raw output. It processes the
+    model's predictions to find the optimal path through the provided hierarchy
+    for each detected bounding box.
+
+    Parameters
+    ----------
+    model : ultralytics.YOLO
+        An evaluated YOLO model instance trained on a flat class structure.
+    hierarchy : dict
+        A dictionary representing the class hierarchy, with keys as child class
+        IDs and values as parent class IDs (e.g., {child_id: parent_id}).
+    images : list or torch.Tensor
+        A batch of images to perform prediction on. Images should be in a
+        format compatible with the YOLO model, such as PIL.Image objects
+        converted to RGB.
+    shape : tuple, optional
+        The input image shape (height, width) for the model, by default (640, 640).
+    cuda : bool, optional
+        If True, the model will be run on a CUDA-enabled GPU, by default False.
+
+    Returns
+    -------
+    tuple
+        A tuple containing three elements:
+        - boxes (list): A list of tensors, where each tensor contains the
+          bounding boxes detected in the corresponding input image.
+        - optimal_paths (list): A list where each element corresponds to an
+          image and contains the most likely hierarchical class path for each
+          detected bounding box.
+        - optimal_path_scores (list): A list containing the scores associated
+          with each optimal path.
+    """
+
 
     #TODO cache this
     parent_tensor = build_parent_tensor(hierarchy)
