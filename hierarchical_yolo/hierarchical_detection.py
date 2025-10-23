@@ -1,31 +1,13 @@
 from copy import copy
-import ultralytics
 import ultralytics.utils.loss
-import ultralytics.models.yolo.detect
+import ultralytics.models
 import torch
 from .utils import *
+from .hierarchy_tensor_utils import *
+from .hierarchical_loss import *
 
-def stable_chained_bce(logits: torch.Tensor, target: torch.Tensor, hierarchy) -> torch.Tensor:
-    """
-    Computes binary cross entropy between a scalar target in [0, 1] and
-    the product of sigmoids of logits, using numerically stable log-space arithmetic.
-
-    logits: shape (n,) -- a sequence of logits representing P(E1), P(E2|E1), etc.
-    target: scalar in [0, 1] -- the ground truth probability for the final event
-    """
-    softplus_terms = torch.nn.functional.softplus(-logits)  # log(1 + e^{-x_i})
-    log_p_hat = -softplus_terms.sum()
-    log_one_minus_p_hat = torch.log1p(-torch.exp(log_p_hat))
-    return -target * log_p_hat - (1 - target) * log_one_minus_p_hat
-
-PSCORES = None
-BBOXES = None
-IMG = None
-TSCORES = None
-TBOXES = None
 class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
     """Criterion class for computing training losses for YOLOv8 object detection."""
-
     
     def __init__(self, model, tal_topk=10, hierarchy=None):  # model must be de-paralleled
         super().__init__(model, tal_topk=tal_topk)
@@ -38,8 +20,6 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
         self.sibling_mask = build_hierarchy_sibling_mask(self.parent_tensor, self.device)
 
         self.bce = torch.nn.BCEWithLogitsLoss(reduction='none')
-        self.blah = 0
-        self.shape_counter = {}
         self.model = model
         """Initialize v8DetectionLoss with model parameters and task-aligned assignment settings."""
 
@@ -90,73 +70,10 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
 
         # Cls loss
         # loss[1] = self.varifocal_loss(pred_scores, target_scores, target_labels) / target_scores_sum  # VFL way        
-
-        '''
-        flat_pred = pred_scores.view(pred_scores.shape[0] * pred_scores.shape[1], pred_scores.shape[2])
-        sibling_normalized_flat_pred = flat_pred - logsumexp_over_siblings(flat_pred, self.sibling_mask)
-        sibling_normalized_pred_scores = sibling_normalized_flat_pred.view(*pred_scores.shape)
-        ''' 
-
-        target_indices = torch.argmax(target_scores, dim=2)
-        masked_hierarchical_scores = hierarchically_index_flat_scores(pred_scores, target_indices, self.hierarchy_index_tensor, self.hierarchy_mask, device=self.device)
-
-        tssum = target_scores.sum(dim=2)
-        sortedtssum, sortindices = tssum.sort(dim=1, descending=True)
-        bestts = sortindices[:4]
         
-        #ultralytics.utils.LOGGER.info("target scores")
-        #ultralytics.utils.LOGGER.info(target_scores.shape)
-        #ultralytics.utils.LOGGER.info(target_scores[0,bestts,:6])
-        #ultralytics.utils.LOGGER.info("hierarchical scores vs flat scores")
-        #ultralytics.utils.LOGGER.info(torch.exp(hierarchical_pred_scores).shape)
-        #ultralytics.utils.LOGGER.info(pred_scores.sigmoid().shape)
-        #ultralytics.utils.LOGGER.info(torch.exp(hierarchical_pred_scores[0,bestts,:6]))
-        #ultralytics.utils.LOGGER.info(pred_scores.sigmoid()[0,bestts,:6])
-        #ultralytics.utils.LOGGER.info(target_indices.shape)
-        #ultralytics.utils.LOGGER.info("pred_scores raw")
-        #ultralytics.utils.LOGGER.info(pred_scores.shape)
-        #ultralytics.utils.LOGGER.info(pred_scores)
-        target_vectors = target_scores.gather(dim=2, index=target_indices.unsqueeze(2)).squeeze(2)
-        flat_mask = self.hierarchy_mask[target_indices]
-        #unnormalized_loss = hierarchical_loss(masked_hierarchical_scores, target_vectors, ~flat_mask)
-        unnormalized_loss = hierarchical_loss2(pred_scores, target_scores, self.hierarchy_index_tensor)
+        unnormalized_loss = hierarchical_loss(pred_scores, target_scores, self.hierarchy_index_tensor)
 
-
-        for i in range(len(batch['im_file'])):
-          if '20190925_183834_20190925.185122.879.008705s.jpg' in batch['im_file'][i]:
-            ultralytics.utils.LOGGER.info(batch['im_file'][i])
-            ultralytics.utils.LOGGER.info('20190925_183834_20190925.185122.879.008705s.jpg' in batch['im_file'][i])
-            break
-        if '20190925_183834_20190925.185122.879.008705s.jpg' in batch['im_file'][i]:
-          ultralytics.utils.LOGGER.info("pred_scores")
-          ultralytics.utils.LOGGER.info(pred_scores.shape)
-          ultralytics.utils.LOGGER.info(pred_scores)
-          ultralytics.utils.LOGGER.info("preds")
-          ultralytics.utils.LOGGER.info(len(preds))
-          ultralytics.utils.LOGGER.info("batch")
-          ultralytics.utils.LOGGER.info(batch)
-          ultralytics.utils.LOGGER.info('target_scores')
-          ultralytics.utils.LOGGER.info(target_scores.shape)
-          ultralytics.utils.LOGGER.info(target_scores)
-          PSCORES = pred_scores
-          BBOXES = pred_bboxes
-          IMG = batch['img']
-          TSCORES = target_scores
-          TBOXES = target_bboxes
-
- 
         loss[1] = unnormalized_loss.sum() / target_scores_sum
-
-        '''
-        self.shape_counter[target_scores.shape] = 1 if target_scores not in self.shape_counter else self.shape_counter[target_scores.shape] + 1
-        if not self.blah % 1000:
-            ultralytics.utils.LOGGER.info(self.shape_counter)
-        self.blah += 1
-
-        ultralytics.utils.LOGGER.info(self.bce(pred_scores, target_scores.to(dtype)).shape)
-
-        loss[1] = self.bce(pred_scores, target_scores.to(dtype)).sum() / target_scores_sum  # BCE
-        '''
 
         # Bbox loss
         if fg_mask.sum():

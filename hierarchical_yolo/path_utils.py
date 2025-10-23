@@ -1,5 +1,6 @@
 import torch
 import itertools
+from .tree_utils import *
 
 def truncate_path_conditionals(path: list[int], score: torch.Tensor, threshold: float = 0.25) -> tuple[list[int], torch.Tensor]:
     """Truncates a path based on a conditional probability threshold.
@@ -41,6 +42,7 @@ def truncate_path_conditionals(path: list[int], score: torch.Tensor, threshold: 
             break
         truncated_path.append(category)
     return truncated_path, score[:len(truncated_path)]
+
 
 def truncate_path_marginals(path: list[int], score: torch.Tensor, threshold: float = 0.25) -> tuple[list[int], torch.Tensor]:
     """Truncates a path based on a marginal probability threshold.
@@ -85,6 +87,7 @@ def truncate_path_marginals(path: list[int], score: torch.Tensor, threshold: flo
         truncated_path.append(category)
     return truncated_path, score[:len(truncated_path)]
 
+
 def truncate_paths_marginals(predicted_paths: list[list[int]], predicted_path_scores: list[torch.Tensor], threshold: float = 0.25) -> tuple[list[list[int]], list[torch.Tensor]]:
     """Applies marginal probability truncation to a list of paths.
 
@@ -123,6 +126,7 @@ def truncate_paths_marginals(predicted_paths: list[list[int]], predicted_path_sc
         tpath, tscore = truncate_path_marginals(paths, scores, threshold=threshold)
         tpaths.append(tpath), tscores.append(tscore)
     return tpaths, tscores
+
 
 def truncate_paths_conditionals(predicted_paths: list[list[int]], predicted_path_scores: list[torch.Tensor], threshold: float = 0.25) -> tuple[list[list[int]], list[torch.Tensor]]:
     """Applies conditional probability truncation to a list of paths.
@@ -273,13 +277,11 @@ def filter_empty_paths(predicted_boxes: torch.Tensor, predicted_paths: list[list
     [tensor([0.9896]), tensor([0.9246, 0.7684]), tensor([0.8949, 0.8765])]
     """
     keep_idx = [i for i, path in enumerate(predicted_paths) if len(path) > 0]
-    keep_idx_tensor = torch.tensor(keep_idx)
     return (
         predicted_boxes[:,keep_idx],
         [predicted_paths[k] for k in keep_idx],
         [predicted_path_scores[k] for k in keep_idx]
     )
-
 
 
 def batch_filter_empty_paths(predicted_boxes: list[torch.Tensor], predicted_paths: list[list[list[int]]], predicted_path_scores: list[list[torch.Tensor]]) -> list[tuple[torch.Tensor, list[list[int]], list[torch.Tensor]]]:
@@ -322,3 +324,36 @@ def batch_filter_empty_paths(predicted_boxes: list[torch.Tensor], predicted_path
     """
     B = len(predicted_paths)
     return list(itertools.starmap(filter_empty_paths, zip(predicted_boxes, predicted_paths, predicted_path_scores)))
+
+def get_optimal_ancestral_chain(confidences, hierarchy):
+    '''
+    TODO: This method is very loopy.  It wasn't immediately clear how to tensorify these operations.
+    '''
+    # TODO: cache this
+    inverted_tree = invert_childparent_tree(hierarchy)
+    bpaths = []
+    for b, confidence in enumerate(confidences):
+        paths = []
+        for i in range(confidence.shape[1]):
+            confidence_row = confidence[..., i]
+            path = []
+            path_tree = inverted_tree
+            while path_tree:
+                parents = list(path_tree.keys())
+                best = confidence_row.index_select(0, torch.tensor(parents, device=confidence.device)).argmax()
+                path.append(parents[best])
+                path_tree = path_tree[parents[best]]
+            paths.append(path)
+        bpaths.append(paths)
+    return bpaths
+
+def optimal_hierarchical_paths(class_scores, hierarchy):
+    optimal_paths = get_optimal_ancestral_chain(class_scores, hierarchy)
+
+    optimal_path_scores = []
+    for scores, paths in zip(class_scores, optimal_paths):
+        optimal_path_score = []
+        for score, path in zip(scores.T, paths):
+            optimal_path_score.append(torch.gather(score, 0, torch.tensor(path, device=scores.device)))
+        optimal_path_scores.append(optimal_path_score)
+    return optimal_paths, optimal_path_scores

@@ -1,5 +1,5 @@
 import doctest
-
+import torch
 
 def round_mantissa(x, decimals=1):
     # Avoid log(0) by adding a small epsilon

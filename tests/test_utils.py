@@ -1,7 +1,9 @@
 import unittest
 import utils
 import hierarchical_yolo.utils
-import hierarchical_yolo.deep7_model
+import hierarchical_yolo.hierarchical_loss
+import hierarchical_yolo.hierarchy_tensor_utils
+import hierarchical_yolo.tree_utils
 import torch
 
 def mock_batchify(tensor):
@@ -13,7 +15,7 @@ class TestTree(unittest.TestCase):
     inverted_simple_tree = {4: {2: {1: {}}}, 5: {3: {}}}
 
     def test_tree_inversion(self):
-        expected_inversion = hierarchical_yolo.utils.invert_childparent_tree(TestTree.simple_tree)
+        expected_inversion = hierarchical_yolo.tree_utils.invert_childparent_tree(TestTree.simple_tree)
         self.assertDictEqual(TestTree.inverted_simple_tree, expected_inversion)
         
 
@@ -77,16 +79,16 @@ class TestIndexTensor(unittest.TestCase):
         [ 9,  4, -1]], dtype=torch.int32)
 
     def test_index_tensor(self):
-        index_tensor = hierarchical_yolo.utils.build_hierarchy_index_tensor(TestIndexTensor.deep7_extended_hierarchy)
+        index_tensor = hierarchical_yolo.hierarchy_tensor_utils.build_hierarchy_index_tensor(TestIndexTensor.deep7_extended_hierarchy)
         torch.testing.assert_close(index_tensor, TestIndexTensor.deep7_extended_hierarchy_as_index_tensor)
 
     def test_parent_tensor(self):
-        parent_tensor = hierarchical_yolo.utils.build_parent_tensor(TestIndexTensor.deep7_extended_hierarchy)
+        parent_tensor = hierarchical_yolo.hierarchy_tensor_utils.build_parent_tensor(TestIndexTensor.deep7_extended_hierarchy)
         torch.testing.assert_close(parent_tensor, TestIndexTensor.deep7_extended_hierarchy_as_parent_tensor)
 
     def test_sibling_mask(self):
-        parent_tensor = hierarchical_yolo.utils.build_parent_tensor(TestIndexTensor.deep7_extended_hierarchy)
-        sibling_mask = hierarchical_yolo.utils.build_hierarchy_sibling_mask(parent_tensor)
+        parent_tensor = hierarchical_yolo.hierarchy_tensor_utils.build_parent_tensor(TestIndexTensor.deep7_extended_hierarchy)
+        sibling_mask = hierarchical_yolo.hierarchy_tensor_utils.build_hierarchy_sibling_mask(parent_tensor)
         torch.testing.assert_close(sibling_mask.long(), TestIndexTensor.deep7_extended_hierarchy_as_sibling_mask)
 
 
@@ -159,8 +161,8 @@ class TestHierarchicalIndex(unittest.TestCase):
 
     def test_sibling_logsumexp(self):
         flat_scores = torch.tensor(TestHierarchicalIndex.flat_scores)
-        parent_tensor = hierarchical_yolo.utils.build_parent_tensor(TestIndexTensor.deep7_extended_hierarchy)
-        sibling_mask = hierarchical_yolo.utils.build_hierarchy_sibling_mask(parent_tensor)
+        parent_tensor = hierarchical_yolo.hierarchy_tensor_utils.build_parent_tensor(TestIndexTensor.deep7_extended_hierarchy)
+        sibling_mask = hierarchical_yolo.hierarchy_tensor_utils.build_hierarchy_sibling_mask(parent_tensor)
 
         logsumexp = hierarchical_yolo.utils.logsumexp_over_siblings(flat_scores, sibling_mask) 
         torch.testing.assert_close(logsumexp, TestHierarchicalIndex.sibling_logsumexp)
@@ -173,36 +175,17 @@ class TestHierarchicalIndex(unittest.TestCase):
         hierarchy_index_tensor = TestIndexTensor.deep7_extended_hierarchy_as_index_tensor
         hierarchy_mask = hierarchy_index_tensor != -1
         target_indices = torch.argmax(target_scores, dim=2)
-        masked_hierarchical_scores = hierarchical_yolo.utils.hierarchically_index_flat_scores(pred_scores, target_indices, hierarchy_index_tensor, ~hierarchy_mask)
+        masked_hierarchical_scores = hierarchical_yolo.hierarchy_tensor_utils.hierarchically_index_flat_scores(pred_scores, target_indices, hierarchy_index_tensor, ~hierarchy_mask)
         torch.testing.assert_close(masked_hierarchical_scores, masked_hierarchical_scores_expected)
-        
+
     def test_hierarchical_loss(self):
-        target_scores = mock_batchify(torch.tensor(TestHierarchicalIndex.target_scores))
-        pred_scores = mock_batchify(torch.tensor(TestHierarchicalIndex.flat_scores))
-        hierarchy_index_tensor = TestIndexTensor.deep7_extended_hierarchy_as_index_tensor
-        hierarchy_mask = hierarchy_index_tensor != -1
-        target_indices = torch.argmax(target_scores, dim=2)
-        masked_hierarchical_scores = hierarchical_yolo.utils.hierarchically_index_flat_scores(pred_scores, target_indices, hierarchy_index_tensor, ~hierarchy_mask)
-        target_vectors = target_scores.gather(dim=2, index=target_indices.unsqueeze(2)).squeeze(2)
-        flat_mask = hierarchy_mask[target_indices]
-        result = hierarchical_yolo.utils.hierarchical_loss(masked_hierarchical_scores, target_vectors, flat_mask)
-
-        alternate_calculation_result_scores = torch.sigmoid(masked_hierarchical_scores).masked_fill(~flat_mask, 1)
-        alternate_probs = torch.prod(alternate_calculation_result_scores, dim=2)
-        alternate_logprobs = torch.log(alternate_probs)
-        alternate_log1probs = torch.log1p(-alternate_probs)
-        alternate_loss = -(target_vectors * alternate_logprobs.squeeze(0) + (1-target_vectors) * alternate_log1probs)
-
-        torch.testing.assert_close(alternate_loss, result)
-
-    def test_hierarchical_loss2(self):
         tree = {0:1, 1:2, 3:4}
         target = [0.,1.,0.,0.,0.]
         out = [-1.,1.,2.,3.,-1.]
         expected_bce = [0.19,0.45,0.13,0.30,0.31]
 
-        hierarchy_index = hierarchical_yolo.utils.build_hierarchy_index_tensor(tree)
-        actual_bce = hierarchical_yolo.utils.hierarchical_loss2(
+        hierarchy_index = hierarchical_yolo.hierarchy_tensor_utils.build_hierarchy_index_tensor(tree)
+        actual_bce = hierarchical_yolo.hierarchical_loss.hierarchical_loss(
             mock_batchify(torch.tensor([out])),
             mock_batchify(torch.tensor([target])),
             hierarchy_index
@@ -229,11 +212,6 @@ class TestHierarchicalIndex(unittest.TestCase):
                 expected_path_score = torch.tensor(expected_path_score, device=raw_output.device)
                 torch.testing.assert_close(expected_path_score, actual_path_score)
     '''
-
-
-
-def load_tests(loader, tests, ignore):
-    return utils.doctests(hierarchical_yolo.utils, tests)
 
 if __name__ == '__main__':
     unittest.main()

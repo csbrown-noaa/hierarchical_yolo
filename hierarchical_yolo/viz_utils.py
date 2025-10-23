@@ -1,7 +1,6 @@
 import numpy as np
 import cv2
 from PIL import Image
-from ultralytics.utils.ops import scale_boxes, xywh2xyxy
 
 def rescale_boxes(pred_boxes, from_shape, to_shape):
     """
