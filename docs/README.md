@@ -1,10 +1,11 @@
-# repo name
+# Hierarchical YOLO
 
-Describe your project here
+This repo provides wrappers around the [hierarchical loss library](https://csbrown-noaa.github.io/hierarchical_loss/) to facilitate usage with YOLO-style architectures, especially the [ultralytics implementation](https://docs.ultralytics.com/).
+  See the included jupyter notebooks for example usage.
 
 # Installation
 
-Put installation instructions here
+    pip install git+https://github.com/csbrown-noaa/hierarchical_yolo.git
 
 # Contributing
 
