@@ -1,22 +1,8 @@
 import unittest
-import utils
-import hierarchical_yolo.utils
-import hierarchical_yolo.hierarchical_loss
-import hierarchical_yolo.hierarchy_tensor_utils
-import hierarchical_yolo.tree_utils
 import torch
 
 def mock_batchify(tensor):
     return tensor.unsqueeze(0).expand(2,-1,-1)
-
-class TestTree(unittest.TestCase):
-
-    simple_tree = {1:2, 2:3, 2:4, 3:5}
-    inverted_simple_tree = {4: {2: {1: {}}}, 5: {3: {}}}
-
-    def test_tree_inversion(self):
-        expected_inversion = hierarchical_yolo.tree_utils.invert_childparent_tree(TestTree.simple_tree)
-        self.assertDictEqual(TestTree.inverted_simple_tree, expected_inversion)
         
 
 class TestIndexTensor(unittest.TestCase):
@@ -77,19 +63,6 @@ class TestIndexTensor(unittest.TestCase):
         [ 7,  8,  4],
         [ 8,  4, -1],
         [ 9,  4, -1]], dtype=torch.int32)
-
-    def test_index_tensor(self):
-        index_tensor = hierarchical_yolo.hierarchy_tensor_utils.build_hierarchy_index_tensor(TestIndexTensor.deep7_extended_hierarchy)
-        torch.testing.assert_close(index_tensor, TestIndexTensor.deep7_extended_hierarchy_as_index_tensor)
-
-    def test_parent_tensor(self):
-        parent_tensor = hierarchical_yolo.hierarchy_tensor_utils.build_parent_tensor(TestIndexTensor.deep7_extended_hierarchy)
-        torch.testing.assert_close(parent_tensor, TestIndexTensor.deep7_extended_hierarchy_as_parent_tensor)
-
-    def test_sibling_mask(self):
-        parent_tensor = hierarchical_yolo.hierarchy_tensor_utils.build_parent_tensor(TestIndexTensor.deep7_extended_hierarchy)
-        sibling_mask = hierarchical_yolo.hierarchy_tensor_utils.build_hierarchy_sibling_mask(parent_tensor)
-        torch.testing.assert_close(sibling_mask.long(), TestIndexTensor.deep7_extended_hierarchy_as_sibling_mask)
 
 
 class TestHierarchicalIndex(unittest.TestCase):
@@ -157,46 +130,6 @@ class TestHierarchicalIndex(unittest.TestCase):
         [2.588757, 2.588757, 0.880000, 2.588757, 0.810000, 2.588757, 2.588757, 2.588757, 1.199159, 1.199159],
         [2.449941, 2.449941, 0.110000, 2.449941, 0.220000, 2.449941, 2.449941, 2.449941, 1.189659, 1.189659],
         [2.303682, 2.303682, 0.490000, 2.303682, 0.480000, 2.303682, 2.303682, 2.303682, 1.199159, 1.199159]])
-
-
-    def test_sibling_logsumexp(self):
-        flat_scores = torch.tensor(TestHierarchicalIndex.flat_scores)
-        parent_tensor = hierarchical_yolo.hierarchy_tensor_utils.build_parent_tensor(TestIndexTensor.deep7_extended_hierarchy)
-        sibling_mask = hierarchical_yolo.hierarchy_tensor_utils.build_hierarchy_sibling_mask(parent_tensor)
-
-        logsumexp = hierarchical_yolo.utils.logsumexp_over_siblings(flat_scores, sibling_mask) 
-        torch.testing.assert_close(logsumexp, TestHierarchicalIndex.sibling_logsumexp)
-       
-
-    def test_hierarchical_index_flat_scores(self):
-        target_scores = mock_batchify(torch.tensor(TestHierarchicalIndex.target_scores))
-        pred_scores = mock_batchify(torch.tensor(TestHierarchicalIndex.flat_scores))
-        masked_hierarchical_scores_expected = mock_batchify(torch.tensor(TestHierarchicalIndex.masked_hierarchical_scores))
-        hierarchy_index_tensor = TestIndexTensor.deep7_extended_hierarchy_as_index_tensor
-        hierarchy_mask = hierarchy_index_tensor != -1
-        target_indices = torch.argmax(target_scores, dim=2)
-        masked_hierarchical_scores = hierarchical_yolo.hierarchy_tensor_utils.hierarchically_index_flat_scores(pred_scores, target_indices, hierarchy_index_tensor, ~hierarchy_mask)
-        torch.testing.assert_close(masked_hierarchical_scores, masked_hierarchical_scores_expected)
-
-    def test_hierarchical_loss(self):
-        tree = {0:1, 1:2, 3:4}
-        target = [0.,1.,0.,0.,0.]
-        out = [-1.,1.,2.,3.,-1.]
-        expected_bce = [0.19,0.45,0.13,0.30,0.31]
-
-        hierarchy_index = hierarchical_yolo.hierarchy_tensor_utils.build_hierarchy_index_tensor(tree)
-        actual_bce = hierarchical_yolo.hierarchical_loss.hierarchical_loss(
-            mock_batchify(torch.tensor([out])),
-            mock_batchify(torch.tensor([target])),
-            hierarchy_index
-        )
-
-        torch.testing.assert_close(
-            mock_batchify(torch.tensor([expected_bce])), 
-            actual_bce,
-            atol = 0,
-            rtol = 0.05
-        )
 
    
     ''' TODO! This requires postprocess_raw_output to take in nms parameters.  We generally need to hoist these out to be user-variables 

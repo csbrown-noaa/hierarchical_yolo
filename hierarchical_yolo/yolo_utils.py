@@ -1,5 +1,5 @@
-from .tree_utils import *
-from .path_utils import *
+from hierarchical_loss.tree_utils import get_roots
+from hierarchical_loss.path_utils import optimal_hierarchical_paths
 import ultralytics
 import torch
 

@@ -2,9 +2,11 @@ from copy import copy
 import ultralytics.utils.loss
 import ultralytics.models
 import torch
-from .utils import *
-from .hierarchy_tensor_utils import *
-from .hierarchical_loss import *
+from hierarchical_loss.hierarchy import Hierarchy
+from hierarchical_loss.hierarchy_tensor_utils import (
+    accumulate_hierarchy
+)
+from hierarchical_loss.hierarchical_loss import hierarchical_loss
 
 class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
     """Criterion class for computing training losses for YOLOv8 object detection."""
@@ -12,12 +14,7 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
     def __init__(self, model, tal_topk=10, hierarchy=None):  # model must be de-paralleled
         super().__init__(model, tal_topk=tal_topk)
         # hiearchy should be {child_id: parent_id}
-        self.hierarchy = hierarchy
-
-        self.hierarchy_index_tensor = build_hierarchy_index_tensor(hierarchy, self.device)
-        self.hierarchy_mask = self.hierarchy_index_tensor == -1
-        self.parent_tensor = build_parent_tensor(hierarchy, self.device)
-        self.sibling_mask = build_hierarchy_sibling_mask(self.parent_tensor, self.device)
+        self.hierarchy = Hierarchy(hierarchy)
 
         self.bce = torch.nn.BCEWithLogitsLoss(reduction='none')
         self.model = model
@@ -52,12 +49,10 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
 
         # TODO! When figuring out the target scores here, do we need to do anything to the pred_scores??
         logsigmoid_pred_scores = torch.nn.LogSigmoid()(pred_scores)
-        hierarchical_pred_scores = accumulate_hierarchy(logsigmoid_pred_scores, self.hierarchy_index_tensor, cumulative_op=torch.cumsum)
+        hierarchical_pred_scores = accumulate_hierarchy(logsigmoid_pred_scores, self.hierarchy.index_tensor, cumulative_op=torch.sum)
         #####
 
         _, target_bboxes, target_scores, fg_mask, _ = self.assigner(
-            # pred_scores.detach().sigmoid() * 0.8 + dfl_conf.unsqueeze(-1) * 0.2,
-            #pred_scores.detach().sigmoid(),
             torch.exp(hierarchical_pred_scores),
             (pred_bboxes.detach() * stride_tensor).type(gt_bboxes.dtype),
             anchor_points * stride_tensor,
@@ -70,9 +65,7 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
 
         # Cls loss
         # loss[1] = self.varifocal_loss(pred_scores, target_scores, target_labels) / target_scores_sum  # VFL way        
-        
         unnormalized_loss = hierarchical_loss(pred_scores, target_scores, self.hierarchy_index_tensor)
-
         loss[1] = unnormalized_loss.sum() / target_scores_sum
 
         # Bbox loss
