@@ -13,8 +13,10 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
     
     def __init__(self, model, tal_topk=10, hierarchy=None):  # model must be de-paralleled
         super().__init__(model, tal_topk=tal_topk)
+        device = next(model.parameters()).device  # get model device
+
         # hiearchy should be {child_id: parent_id}
-        self.hierarchy = Hierarchy(hierarchy)
+        self.hierarchy = Hierarchy(hierarchy).to(device)
 
         self.bce = torch.nn.BCEWithLogitsLoss(reduction='none')
         self.model = model
