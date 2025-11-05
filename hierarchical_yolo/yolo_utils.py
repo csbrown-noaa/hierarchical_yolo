@@ -105,9 +105,9 @@ def postprocess_raw_output(
     # TODO: cache this
     roots = get_roots(hierarchy)
     # TODO: this logic is wrong.  We need to subset raw_yolo_output to root classes instead of using the `classes` arg
-    _, nms_idxs = ultralytics.utils.ops.non_max_suppression(raw_yolo_output, classes=roots, return_idxs=True, iou_thres=nms_iou_thres, conf_thres=nms_conf_thres, multi_label=True)
+    _, nms_idxs = ultralytics.utils.nms.non_max_suppression(raw_yolo_output, classes=roots, return_idxs=True, iou_thres=nms_iou_thres, conf_thres=nms_conf_thres, multi_label=True)
     for i, idx in enumerate(nms_idxs):
-        flat_idx = idx.flatten()
+        flat_idx = idx.flatten().long()
         nms_output = raw_yolo_output[i].index_select(1, flat_idx)
         boxes = nms_output[:4, :]
         class_scores = nms_output[4:, :]
