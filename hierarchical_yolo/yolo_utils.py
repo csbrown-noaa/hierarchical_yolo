@@ -11,8 +11,7 @@ from PIL import Image
 def yolo_raw_predict(
     model: ultralytics.YOLO,
     images: list[Image.Image],
-    shape: tuple[int, int],
-    cuda: bool = False,
+    shape: tuple[int, int]
 ) -> torch.Tensor:
     """Runs a batch of images through a YOLO model's raw backbone.
 
@@ -43,9 +42,7 @@ def yolo_raw_predict(
         T.Resize(shape),
         T.ToTensor(),
     ])
-    input_tensor = torch.stack([transform(img) for img in images])
-    if cuda:
-        input_tensor = input_tensor.to('cuda')
+    input_tensor = torch.stack([transform(img) for img in images]).to(model.device)
 
     with torch.no_grad():
         raw_output = model.model(input_tensor)[0]
@@ -124,7 +121,6 @@ def hierarchical_predict(
     hierarchy: dict[int, int],
     images: list[Image.Image],
     shape: tuple[int, int] = (640, 640),
-    cuda: bool = False,
     nms_iou_thres: float | None = None,
     nms_conf_thres: float | None = None,
 ) -> tuple[list[torch.Tensor], list[list[list[int]]], list[list[torch.Tensor]]]:
@@ -168,7 +164,7 @@ def hierarchical_predict(
            `[batch][detection]` containing 1D tensors of scores
            associated with each optimal path.
     """
-    raw_output = yolo_raw_predict(model, images, shape, cuda)
+    raw_output = yolo_raw_predict(model, images, shape)
 
     boxes, pred_scoreses = postprocess_raw_output(raw_output, hierarchy, nms_iou_thres=nms_iou_thres, nms_conf_thres=nms_conf_thres)
 
