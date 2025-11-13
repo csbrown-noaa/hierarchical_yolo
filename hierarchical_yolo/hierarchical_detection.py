@@ -16,7 +16,9 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
         device = next(model.parameters()).device  # get model device
 
         # hiearchy should be {child_id: parent_id}
-        self.hierarchy = Hierarchy(hierarchy).to(device)
+        # TODO: Hoist this out to the next level so that users can reuse this class.
+        nodes = set(hierarchy.values()) | set(hierarchy.keys())
+        self.hierarchy = Hierarchy(hierarchy, {i: i for i in range(len(nodes))}).to(device)
 
         self.bce = torch.nn.BCEWithLogitsLoss(reduction='none')
         self.model = model
