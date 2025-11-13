@@ -7,6 +7,7 @@ except:
     from ultralytics.utils.nms import non_max_suppression # new version
 import torch
 from PIL import Image
+import yaml
 
 def yolo_raw_predict(
     model: ultralytics.YOLO,
@@ -171,3 +172,47 @@ def hierarchical_predict(
     optimal_paths, optimal_path_scores = optimal_hierarchical_paths(pred_scoreses, hierarchy)
 
     return boxes, optimal_paths, optimal_path_scores
+
+
+def get_yolo_class_names(yaml_file_path: str) -> dict[int, str]:
+    """Reads the class names from an Ultralytics YAML file.
+
+    This function opens and parses a YAML file, expecting to find a
+    'names' key which contains a dictionary mapping integer class IDs
+    to string class names.
+
+    Parameters
+    ----------
+    yaml_file_path : str
+        The full path to the input YAML file (e.g., 'data/coco.yaml').
+
+    Returns
+    -------
+    dict[int, str]
+        A dictionary where keys are integer class IDs and values are the
+        corresponding class name strings.
+
+    Examples
+    --------
+    Assuming a 'coco.yaml' file exists with the following content:
+
+    .. code-block:: yaml
+
+        # ... other yaml properties
+        names:
+          0: person
+          1: bicycle
+          2: car
+        # ...
+
+    >>> class_dict = get_class_names('coco.yaml')
+    >>> print(class_dict)
+    {0: 'person', 1: 'bicycle', 2: 'car'}
+    """
+    with open(yaml_file_path, 'r') as f:
+        data = yaml.safe_load(f)
+        if 'names' in data and isinstance(data['names'], dict):
+            # Ensure keys are integers, as YAML might parse them as strings
+            # in some cases, although typically not for this format.
+            class_names = {int(k): v for k, v in data['names'].items()}
+            return class_names
