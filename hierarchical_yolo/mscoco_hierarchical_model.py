@@ -117,7 +117,7 @@ COCO_HIERARCHY = {
 
 YOLO_DATASET_YAML = resources.files('hierarchical_yolo.models.coco128').joinpath('hierarchicalcoco128.yaml')
 with open(YOLO_DATASET_YAML, 'r') as f:
-    COCO_YOLO_ID_MAP = get_yolo_class_names(YOLO_DATASET_YAML)
+    COCO_YOLO_ID_MAP = get_yolo_class_names(f)
 
 class MSCOCOHierarchicalDetectionTrainer(HierarchicalDetectionTrainer):
     # Hierarchy requires the index -> name map in the other direction
