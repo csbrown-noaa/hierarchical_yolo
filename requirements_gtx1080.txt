@@ -1,0 +1,4 @@
+# Older versions of torch and ultralytics for GTX 1080 compatibility
+torch==2.7.0
+torchvision==0.22.0
+ultralytics==8.3.186

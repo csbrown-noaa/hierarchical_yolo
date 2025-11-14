@@ -1,5 +1,0 @@
-mkdocs
-mkdocs-material
-mkdocstrings[python]
-
-git+https://github.com/csbrown-noaa/hierarchical_loss.git

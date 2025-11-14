@@ -11,8 +11,18 @@ authors = [
 ]
 dependencies = [
   "ultralytics",
+  "torch",
+  "hierarchical_loss @ git+https://github.com/csbrown-noaa/hierarchical_loss.git"
 ]
 readme = "README.md"
 classifiers = [
-    "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3",
+]
+
+[project.optional-dependencies]
+dev = [
+  "mkdocs",
+  "mkdocs-material",
+  "mkdocstrings[python]",
+  "jupyter"
 ]
