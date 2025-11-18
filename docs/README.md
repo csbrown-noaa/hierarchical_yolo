@@ -7,6 +7,15 @@ This repo provides wrappers around the [hierarchical loss library](https://csbro
 
     pip install git+https://github.com/csbrown-noaa/hierarchical_yolo.git
 
+If you are interested in exploring the included example notebook, you will need to install the package and also place the required config files in the appropriate paths.  One way to accomplish this is to simply clone this repo, create a venv, and install the library and dependencies from the cloned repo:
+
+    git clone https://github.com/csbrown-noaa/hierarchical_yolo.git
+    cd hierarchical_yolo
+    python3 -m venv .venv
+    source .venv/bin/activate
+    pip install '.[dev]'
+    jupyter lab
+
 # Contributing
 
 We would love to have your contributions that improve current functionality, fix bugs, or add new features.  See [the contributing guidelines](CONTRIBUTING.md) for more info.
