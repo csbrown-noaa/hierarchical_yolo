@@ -4,7 +4,7 @@ build-backend = "flit_core.buildapi"
 
 [project]
 name = "hierarchical_yolo"
-version = "0.1.0"
+version = "0.1.1"
 description = "yolo, but with hierarchical output"
 authors = [
     { name = "CScott Brown" },
@@ -12,7 +12,8 @@ authors = [
 dependencies = [
   "ultralytics",
   "torch",
-  "hierarchical_loss @ git+https://github.com/csbrown-noaa/hierarchical_loss.git"
+  "hierarchical_loss @ git+https://github.com/csbrown-noaa/hierarchical_loss.git",
+  "pycocowriter"
 ]
 readme = "README.md"
 classifiers = [
