@@ -17,22 +17,17 @@ class MSCOCOHierarchicalDetectionTrainer(HierarchicalDetectionTrainer):
     # Hierarchy requires the index -> name map in the other direction
     _hierarchy = Hierarchy(COCO_HIERARCHY, {v: k for k,v in COCO_YOLO_ID_MAP.items()})
 
-def prepare_coco_data(destination_directory: str) -> None:
-    import pycocowriter.cocomerge
-    import pycocowriter.coco2yolo
+DATA = "hierarchical_coco"
+def download_coco_data(destination_directory: str) -> None:
     import os
     import urllib.request
     import zipfile
-    DATA = os.path.join(destination_directory, 'hierarchical_coco')
-    os.makedirs(DATA, exist_ok = True)
+    data = os.path.join(destination_directory, DATA)
+    os.makedirs(data, exist_ok = True)
     COCO_ANNOTATIONS_URL = 'http://images.cocodataset.org/annotations/annotations_trainval2017.zip'
     COCO_TRAIN_IMAGES_URL = 'http://images.cocodataset.org/zips/train2017.zip'
     COCO_TEST_IMAGES_URL = 'http://images.cocodataset.org/zips/test2017.zip'
     COCO_VAL_IMAGES_URL = 'http://images.cocodataset.org/zips/val2017.zip'
-    # paths to data
-    ANNOTATIONS = os.path.join(DATA, 'annotations', 'instances')
-    TRAIN_ANNOTATIONS = os.path.join(ANNOTATIONS, 'instances_train2017.json')
-    TEST_ANNOTATIONS = os.path.join(ANNOTATIONS, 'instances_test2017.json')
 
     # download and unzip everything
     for url in [
@@ -43,13 +38,24 @@ def prepare_coco_data(destination_directory: str) -> None:
     ]:
         filename = url.split('/')[-1]
         print(f"downloading {filename}")
-        destination = os.path.join(DATA, filename)
+        destination = os.path.join(data, filename)
         urllib.request.urlretrieve(url, destination)
         print(f"extracting {filename}")
         with zipfile.ZipFile(destination, "r") as f:
-            f.extractall(DATA)
+            f.extractall(data)
         os.remove(destination)
 
+def prepare_coco_data(destination_directory: str) -> None:
+    import pycocowriter.cocomerge
+    import pycocowriter.coco2yolo
+    import os
+    import urllib.request
+    import zipfile
+    data = os.path.join(destination_directory, DATA)
+    # paths to data
+    ANNOTATIONS = os.path.join(data, 'annotations', 'instances')
+    TRAIN_ANNOTATIONS = os.path.join(ANNOTATIONS, 'instances_train2017.json')
+    TEST_ANNOTATIONS = os.path.join(ANNOTATIONS, 'instances_test2017.json')
     # load the hierarchy
     print(f"loading hierarchy")
     COCO_HIERARCHY_JSON = resources.files('hierarchical_yolo.models').joinpath('coco_hierarchy.json')
@@ -78,4 +84,4 @@ def prepare_coco_data(destination_directory: str) -> None:
 
     # create yolo-compatible annotations
     print(f"converting to yolo")
-    pycocowriter.coco2yolo.coco2yolo(ANNOTATIONS, DATA) 
+    pycocowriter.coco2yolo.coco2yolo(ANNOTATIONS, data) 
