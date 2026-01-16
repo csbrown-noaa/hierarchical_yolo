@@ -56,6 +56,10 @@ def prepare_coco_data(destination_directory: str) -> None:
     ANNOTATIONS = os.path.join(data, 'annotations')
     TRAIN_ANNOTATIONS = os.path.join(ANNOTATIONS, 'instances_train2017.json')
     VAL_ANNOTATIONS = os.path.join(ANNOTATIONS, 'instances_val2017.json')
+    os.remove(os.path.join(data, 'annotations', 'captions_train2017.json'))
+    os.remove(os.path.join(data, 'annotations', 'captions_val2017.json'))
+    os.remove(os.path.join(data, 'annotations', 'person_keypoints_train2017.json'))
+    os.remove(os.path.join(data, 'annotations', 'person_keypoints_val2017.json'))
     # load the hierarchy
     print(f"loading hierarchy")
     COCO_HIERARCHY_JSON = resources.files('hierarchical_yolo.models').joinpath('coco_hierarchy.json')
