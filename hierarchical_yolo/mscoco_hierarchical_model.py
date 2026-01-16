@@ -42,13 +42,16 @@ def prepare_coco_data(destination_directory: str) -> None:
         COCO_VAL_IMAGES_URL
     ]:
         filename = url.split('/')[-1]
+        print(f"downloading {filename}")
         destination = os.path.join(DATA, filename)
         urllib.request.urlretrieve(url, destination)
+        print(f"extracting {filename}")
         with zipfile.ZipFile(destination, "r") as f:
             f.extractall(DATA)
         os.remove(destination)
 
     # load the hierarchy
+    print(f"loading hierarchy")
     COCO_HIERARCHY_JSON = resources.files('hierarchical_yolo.models').joinpath('coco_hierarchy.json')
     with open(COCO_HIERARCHY_JSON, 'r') as f:
         COCO_HIERARCHY = json.load(f)
@@ -62,13 +65,17 @@ def prepare_coco_data(destination_directory: str) -> None:
 
     # update the files to have the new categories
     for coco_file in [TEST_ANNOTATIONS, TRAIN_ANNOTATIONS]:
+        print(f"loading {coco_file}")
         with open(coco_file, 'r') as f:
             coco = json.load(f)
+        print(f"expanding {coco_file}")
         expanded_coco = pycocowriter.cocomerge.coco_merge(coco, all_categories)
         expanded_coco = pycocowriter.cocomerge.coco_collapse_categories(expanded_coco)
         expanded_coco = pycocowriter.cocomerge.coco_reindex_categories(expanded_coco)
+        print(f"writing {coco_file}")
         with open(coco_file, 'w') as f:
             json.dump(expanded_coco, f)
 
     # create yolo-compatible annotations
+    print(f"converting to yolo")
     pycocowriter.coco2yolo.coco2yolo(ANNOTATIONS, DATA) 
