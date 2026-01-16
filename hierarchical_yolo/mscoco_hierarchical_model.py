@@ -55,7 +55,7 @@ def prepare_coco_data(destination_directory: str) -> None:
     # paths to data
     ANNOTATIONS = os.path.join(data, 'annotations')
     TRAIN_ANNOTATIONS = os.path.join(ANNOTATIONS, 'instances_train2017.json')
-    TEST_ANNOTATIONS = os.path.join(ANNOTATIONS, 'instances_test2017.json')
+    VAL_ANNOTATIONS = os.path.join(ANNOTATIONS, 'instances_val2017.json')
     # load the hierarchy
     print(f"loading hierarchy")
     COCO_HIERARCHY_JSON = resources.files('hierarchical_yolo.models').joinpath('coco_hierarchy.json')
@@ -70,7 +70,7 @@ def prepare_coco_data(destination_directory: str) -> None:
     ]
 
     # update the files to have the new categories
-    for coco_file in [TEST_ANNOTATIONS, TRAIN_ANNOTATIONS]:
+    for coco_file in [VAL_ANNOTATIONS, TRAIN_ANNOTATIONS]:
         print(f"loading {coco_file}")
         with open(coco_file, 'r') as f:
             coco = json.load(f)
