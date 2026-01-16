@@ -53,7 +53,7 @@ def prepare_coco_data(destination_directory: str) -> None:
     import zipfile
     data = os.path.join(destination_directory, DATA)
     # paths to data
-    ANNOTATIONS = os.path.join(data, 'annotations', 'instances')
+    ANNOTATIONS = os.path.join(data, 'annotations')
     TRAIN_ANNOTATIONS = os.path.join(ANNOTATIONS, 'instances_train2017.json')
     TEST_ANNOTATIONS = os.path.join(ANNOTATIONS, 'instances_test2017.json')
     # load the hierarchy
