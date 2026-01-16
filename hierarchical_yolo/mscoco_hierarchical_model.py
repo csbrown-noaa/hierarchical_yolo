@@ -68,14 +68,20 @@ def prepare_coco_data(destination_directory: str) -> None:
             'name': cat 
         } for i, cat in enumerate(all_category_names)
     ]
-
+    expanded_category_coco = {
+        'info': {},
+        'images': [],
+        'annotations': [],
+        'licenses': [],
+        'categories': all_categories
+    }
     # update the files to have the new categories
     for coco_file in [VAL_ANNOTATIONS, TRAIN_ANNOTATIONS]:
         print(f"loading {coco_file}")
         with open(coco_file, 'r') as f:
             coco = json.load(f)
         print(f"expanding {coco_file}")
-        expanded_coco = pycocowriter.cocomerge.coco_merge(coco, all_categories)
+        expanded_coco = pycocowriter.cocomerge.coco_merge(coco, expanded_category_coco)
         expanded_coco = pycocowriter.cocomerge.coco_collapse_categories(expanded_coco)
         expanded_coco = pycocowriter.cocomerge.coco_reindex_categories(expanded_coco)
         print(f"writing {coco_file}")
