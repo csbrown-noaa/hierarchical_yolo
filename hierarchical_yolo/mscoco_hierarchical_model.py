@@ -24,7 +24,7 @@ class MSCOCOHierarchicalDetectionTrainer(HierarchicalDetectionTrainer):
 
 def download_coco_data(destination_directory: str) -> None:
     data = os.path.join(destination_directory, 'coco')
-    os.makedirs(data, exist_ok = true)
+    os.makedirs(data, exist_ok = True)
     COCO_ANNOTATIONS_URL = 'http://images.cocodataset.org/annotations/annotations_trainval2017.zip'
     #COCO_TRAIN_IMAGES_URL = 'http://images.cocodataset.org/zips/train2017.zip'
     #COCO_TEST_IMAGES_URL = 'http://images.cocodataset.org/zips/test2017.zip'
