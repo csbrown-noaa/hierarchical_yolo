@@ -4,6 +4,7 @@ import yaml
 import json
 from importlib import resources
 from hierarchical_loss.hierarchy import Hierarchy
+import contextlib
 
 
 YOLO_DATASET_YAML = resources.files('hierarchical_yolo.models.coco128').joinpath('hierarchicalcoco128.yaml')
@@ -54,12 +55,13 @@ def prepare_coco_data(destination_directory: str) -> None:
     data = os.path.join(destination_directory, DATA)
     # paths to data
     ANNOTATIONS = os.path.join(data, 'annotations')
-    TRAIN_ANNOTATIONS = 'instances_train2017.json'
-    VAL_ANNOTATIONS = 'instances_val2017.json'
-    os.remove(os.path.join(data, 'annotations', 'captions_train2017.json'))
-    os.remove(os.path.join(data, 'annotations', 'captions_val2017.json'))
-    os.remove(os.path.join(data, 'annotations', 'person_keypoints_train2017.json'))
-    os.remove(os.path.join(data, 'annotations', 'person_keypoints_val2017.json'))
+    with contextlib.suppress(FileNotFoundError):
+        os.rename(os.path.join(ANNOTATIONS, 'instances_train2017.json'), os.path.join(ANNOTATIONS, 'train2017.json'))
+        os.rename(os.path.join(ANNOTATIONS, 'instances_val2017.json'), os.path.join(ANNOTATIONS, 'val2017.json'))
+        os.remove(os.path.join(data, 'annotations', 'captions_train2017.json'))
+        os.remove(os.path.join(data, 'annotations', 'captions_val2017.json'))
+        os.remove(os.path.join(data, 'annotations', 'person_keypoints_train2017.json'))
+        os.remove(os.path.join(data, 'annotations', 'person_keypoints_val2017.json'))
     # load the hierarchy
     print(f"loading hierarchy")
     COCO_HIERARCHY_JSON = resources.files('hierarchical_yolo.models').joinpath('coco_hierarchy.json')
@@ -80,7 +82,7 @@ def prepare_coco_data(destination_directory: str) -> None:
         'categories': all_categories
     }
     # update the files to have the new categories
-    for coco_file in [VAL_ANNOTATIONS, TRAIN_ANNOTATIONS]:
+    for coco_file in ['train2017.json', 'val2017.json']:
         path = os.path.join(ANNOTATIONS, coco_file)
         print(f"loading {coco_file}")
         with open(path, 'r') as f:
@@ -90,9 +92,8 @@ def prepare_coco_data(destination_directory: str) -> None:
         expanded_coco = pycocowriter.cocomerge.coco_collapse_categories(expanded_coco)
         expanded_coco = pycocowriter.cocomerge.coco_reindex_categories(expanded_coco)
         print(f"writing {coco_file}")
-        with open(os.path.join(ANNOTATIONS, coco_file.replace('instances_','')), 'w') as f:
+        with open(path, 'w') as f:
             json.dump(expanded_coco, f)
-        os.remove(path)
 
     # create yolo-compatible annotations
     print(f"converting to yolo")
