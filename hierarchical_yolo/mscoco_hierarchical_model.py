@@ -54,8 +54,8 @@ def prepare_coco_data(destination_directory: str) -> None:
     data = os.path.join(destination_directory, DATA)
     # paths to data
     ANNOTATIONS = os.path.join(data, 'annotations')
-    TRAIN_ANNOTATIONS = os.path.join(ANNOTATIONS, 'instances_train2017.json')
-    VAL_ANNOTATIONS = os.path.join(ANNOTATIONS, 'instances_val2017.json')
+    TRAIN_ANNOTATIONS = 'instances_train2017.json'
+    VAL_ANNOTATIONS = 'instances_val2017.json'
     os.remove(os.path.join(data, 'annotations', 'captions_train2017.json'))
     os.remove(os.path.join(data, 'annotations', 'captions_val2017.json'))
     os.remove(os.path.join(data, 'annotations', 'person_keypoints_train2017.json'))
@@ -81,16 +81,18 @@ def prepare_coco_data(destination_directory: str) -> None:
     }
     # update the files to have the new categories
     for coco_file in [VAL_ANNOTATIONS, TRAIN_ANNOTATIONS]:
+        path = os.path.join(ANNOTATIONS, coco_file)
         print(f"loading {coco_file}")
-        with open(coco_file, 'r') as f:
+        with open(path, 'r') as f:
             coco = json.load(f)
         print(f"expanding {coco_file}")
         expanded_coco = pycocowriter.cocomerge.coco_merge(coco, expanded_category_coco)
         expanded_coco = pycocowriter.cocomerge.coco_collapse_categories(expanded_coco)
         expanded_coco = pycocowriter.cocomerge.coco_reindex_categories(expanded_coco)
         print(f"writing {coco_file}")
-        with open(coco_file, 'w') as f:
+        with open(os.path.join(ANNOTATIONS, coco_file.replace('instances_','')), 'w') as f:
             json.dump(expanded_coco, f)
+        os.remove(path)
 
     # create yolo-compatible annotations
     print(f"converting to yolo")
