@@ -5,6 +5,9 @@ import json
 from importlib import resources
 from hierarchical_loss.hierarchy import Hierarchy
 import contextlib
+import os
+import urllib.request
+import zipfile
 
 
 YOLO_DATASET_YAML = resources.files('hierarchical_yolo.models.coco128').joinpath('hierarchicalcoco128.yaml')
@@ -18,13 +21,8 @@ class MSCOCOHierarchicalDetectionTrainer(HierarchicalDetectionTrainer):
     # Hierarchy requires the index -> name map in the other direction
     _hierarchy = Hierarchy(COCO_HIERARCHY, {v: k for k,v in COCO_YOLO_ID_MAP.items()})
 
-DATA = "hierarchical_coco"
 def download_coco_data(destination_directory: str) -> None:
-    import os
-    import urllib.request
-    import zipfile
-    data = os.path.join(destination_directory, DATA)
-    os.makedirs(data, exist_ok = True)
+    os.makedirs(data, exist_ok = true)
     COCO_ANNOTATIONS_URL = 'http://images.cocodataset.org/annotations/annotations_trainval2017.zip'
     COCO_TRAIN_IMAGES_URL = 'http://images.cocodataset.org/zips/train2017.zip'
     COCO_TEST_IMAGES_URL = 'http://images.cocodataset.org/zips/test2017.zip'
@@ -55,13 +53,8 @@ def prepare_coco_data(destination_directory: str) -> None:
     data = os.path.join(destination_directory, DATA)
     # paths to data
     ANNOTATIONS = os.path.join(data, 'annotations')
-    with contextlib.suppress(FileNotFoundError):
-        os.rename(os.path.join(ANNOTATIONS, 'instances_train2017.json'), os.path.join(ANNOTATIONS, 'train2017.json'))
-        os.rename(os.path.join(ANNOTATIONS, 'instances_val2017.json'), os.path.join(ANNOTATIONS, 'val2017.json'))
-        os.remove(os.path.join(data, 'annotations', 'captions_train2017.json'))
-        os.remove(os.path.join(data, 'annotations', 'captions_val2017.json'))
-        os.remove(os.path.join(data, 'annotations', 'person_keypoints_train2017.json'))
-        os.remove(os.path.join(data, 'annotations', 'person_keypoints_val2017.json'))
+    HIERARCHICAL_ANNOTATIONS = os.path.join(ANNOTATIONS, 'hierarchical_annotations')
+    os.makedirs(HIERARCHICAL_ANNOTATIONS, exist_ok = true)
     # load the hierarchy
     print(f"loading hierarchy")
     COCO_HIERARCHY_JSON = resources.files('hierarchical_yolo.models').joinpath('coco_hierarchy.json')
@@ -82,7 +75,7 @@ def prepare_coco_data(destination_directory: str) -> None:
         'categories': all_categories
     }
     # update the files to have the new categories
-    for coco_file in ['train2017.json', 'val2017.json']:
+    for coco_file in ['instances_train2017.json', 'instances_val2017.json']:
         path = os.path.join(ANNOTATIONS, coco_file)
         print(f"loading {coco_file}")
         with open(path, 'r') as f:
@@ -92,9 +85,9 @@ def prepare_coco_data(destination_directory: str) -> None:
         expanded_coco = pycocowriter.cocomerge.coco_collapse_categories(expanded_coco)
         expanded_coco = pycocowriter.cocomerge.coco_reindex_categories(expanded_coco)
         print(f"writing {coco_file}")
-        with open(path, 'w') as f:
+        with open(os.path.join(HIERARCHICAL_ANNOTATIONS, coco_file.replace('instances_','')), 'w') as f:
             json.dump(expanded_coco, f)
 
     # create yolo-compatible annotations
     print(f"converting to yolo")
-    pycocowriter.coco2yolo.coco2yolo(ANNOTATIONS, data) 
+    pycocowriter.coco2yolo.coco2yolo(HIERARCHICAL_ANNOTATIONS, data) 
