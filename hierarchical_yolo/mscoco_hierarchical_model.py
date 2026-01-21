@@ -21,19 +21,21 @@ class MSCOCOHierarchicalDetectionTrainer(HierarchicalDetectionTrainer):
     # Hierarchy requires the index -> name map in the other direction
     _hierarchy = Hierarchy(COCO_HIERARCHY, {v: k for k,v in COCO_YOLO_ID_MAP.items()})
 
+
 def download_coco_data(destination_directory: str) -> None:
+    data = os.path.join(destination_directory, 'coco')
     os.makedirs(data, exist_ok = true)
     COCO_ANNOTATIONS_URL = 'http://images.cocodataset.org/annotations/annotations_trainval2017.zip'
-    COCO_TRAIN_IMAGES_URL = 'http://images.cocodataset.org/zips/train2017.zip'
-    COCO_TEST_IMAGES_URL = 'http://images.cocodataset.org/zips/test2017.zip'
-    COCO_VAL_IMAGES_URL = 'http://images.cocodataset.org/zips/val2017.zip'
+    #COCO_TRAIN_IMAGES_URL = 'http://images.cocodataset.org/zips/train2017.zip'
+    #COCO_TEST_IMAGES_URL = 'http://images.cocodataset.org/zips/test2017.zip'
+    #COCO_VAL_IMAGES_URL = 'http://images.cocodataset.org/zips/val2017.zip'
 
     # download and unzip everything
     for url in [
-        COCO_ANNOTATIONS_URL,
-        COCO_TRAIN_IMAGES_URL,
-        COCO_TEST_IMAGES_URL,
-        COCO_VAL_IMAGES_URL
+        COCO_ANNOTATIONS_URL
+        #COCO_TRAIN_IMAGES_URL,
+        #COCO_TEST_IMAGES_URL,
+        #COCO_VAL_IMAGES_URL
     ]:
         filename = url.split('/')[-1]
         print(f"downloading {filename}")
@@ -44,6 +46,7 @@ def download_coco_data(destination_directory: str) -> None:
             f.extractall(data)
         os.remove(destination)
 
+DATA = 'hierarchical_coco'
 def prepare_coco_data(destination_directory: str) -> None:
     import pycocowriter.cocomerge
     import pycocowriter.coco2yolo
