@@ -46,18 +46,17 @@ def download_coco_data(destination_directory: str) -> None:
             f.extractall(data)
         os.remove(destination)
 
-DATA = 'hierarchical_coco'
 def prepare_coco_data(destination_directory: str) -> None:
     import pycocowriter.cocomerge
     import pycocowriter.coco2yolo
     import os
     import urllib.request
     import zipfile
-    data = os.path.join(destination_directory, DATA)
+    data = os.path.join(destination_directory, 'coco')
     # paths to data
     ANNOTATIONS = os.path.join(data, 'annotations')
     HIERARCHICAL_ANNOTATIONS = os.path.join(ANNOTATIONS, 'hierarchical_annotations')
-    os.makedirs(HIERARCHICAL_ANNOTATIONS, exist_ok = true)
+    os.makedirs(HIERARCHICAL_ANNOTATIONS, exist_ok = True)
     # load the hierarchy
     print(f"loading hierarchy")
     COCO_HIERARCHY_JSON = resources.files('hierarchical_yolo.models').joinpath('coco_hierarchy.json')
