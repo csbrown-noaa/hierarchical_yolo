@@ -6,7 +6,7 @@ from hierarchical_loss.hierarchy import Hierarchy
 from hierarchical_loss.hierarchy_tensor_utils import (
     accumulate_hierarchy
 )
-from hierarchical_loss.hierarchical_loss import hierarchical_bce
+from hierarchical_loss.hierarchical_loss import hierarchical_bce, hierarchical_conditional_bce
 
 class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
     """Criterion class for computing training losses for YOLOv8 object detection."""
@@ -67,11 +67,19 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
         target_scores_sum = max(target_scores.sum(), 1)
 
         # Cls loss
-        # loss[1] = self.varifocal_loss(pred_scores, target_scores, target_labels) / target_scores_sum  # VFL way        
+        # loss[1] = self.varifocal_loss(pred_scores, target_scores, target_labels) / target_scores_sum  # VFL way
+        '''
         unnormalized_loss = hierarchical_bce(
             pred_scores, 
             target_scores, 
             self.hierarchy.index_tensor
+        )
+        '''
+        unnormalized_loss = hierarchical_conditional_bce(
+            pred_scores,
+            target_scores,
+            self.hierarchy.ancestor_mask,
+            self.hierarchy.ancestor_sibling_mask
         )
         loss[1] = unnormalized_loss.sum() / target_scores_sum
 
