@@ -83,7 +83,7 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
 
         # 2. Compute Structural Loss (Normalized by Hierarchy Depth/Width)
         # Returns: (B, N_anchors)
-        loss_per_anchor = hierarchical_conditional_loss(
+        loss_per_anchor = hierarchical_conditional_bce(
             pred_scores,
             target_indices,
             self.hierarchy.ancestor_mask,
