@@ -74,8 +74,8 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
             target_scores, 
             self.hierarchy.index_tensor
         )
-        loss[1] = unnormalized_loss.sum() / target_scores_sum
         '''
+        
         # 1. Prepare Inputs
         # Get the class ID (index) and the Quality Score (weight) for each anchor
         # target_scores: (B, N_anchors, N_classes)
@@ -89,7 +89,7 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
             self.hierarchy.ancestor_mask,
             self.hierarchy.ancestor_sibling_mask
         )
-
+        '''
         # 3. Apply Target Weights (Quality Normalization)
         # We value high-IoU matches more than low-IoU matches
         weighted_loss = loss_per_anchor * target_weights
@@ -99,6 +99,8 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
         # Use max(..., 1) to prevent NaN on empty batches
         loss_norm = target_weights.sum().clamp(min=1.0)
         loss[1] = weighted_loss.sum() / loss_norm
+        '''
+        loss[1] = loss_per_anchor / target_scores_sum
 
         # Bbox loss
         if fg_mask.sum():
