@@ -100,7 +100,7 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
         loss_norm = target_weights.sum().clamp(min=1.0)
         loss[1] = weighted_loss.sum() / loss_norm
         '''
-        loss[1] = loss_per_anchor.sum() / target_scores_sum
+        loss[1] = (target_weights * loss_per_anchor).sum() / target_scores_sum
 
         # Bbox loss
         if fg_mask.sum():
