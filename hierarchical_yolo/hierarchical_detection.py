@@ -81,14 +81,28 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
         # target_scores: (B, N_anchors, N_classes)
         target_weights, target_indices = target_scores.max(dim=-1)
 
+        hierarchical_class_loss = hierarchical_conditional_bce_soft_root(
+            pred_scores,
+            target_weights,
+            target_indices,
+            self.hierarchy.ancestor_mask,
+            self.hierarchy.ancestor_sibling_mask,
+            self.hierarchy.root_mask
+        )
+        loss[1] = hierarchical_class_loss.sum() / target_scores_sum
+            
+
         # 2. Compute Structural Loss (Normalized by Hierarchy Depth/Width)
         # Returns: (B, N_anchors)
+        '''
         loss_per_anchor = hierarchical_conditional_bce(
             pred_scores,
             target_indices,
             self.hierarchy.ancestor_mask,
             self.hierarchy.ancestor_sibling_mask
         )
+        loss[1] = (target_weights * loss_per_anchor).sum() / target_scores_sum
+        '''
         '''
         # 3. Apply Target Weights (Quality Normalization)
         # We value high-IoU matches more than low-IoU matches
@@ -100,7 +114,6 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
         loss_norm = target_weights.sum().clamp(min=1.0)
         loss[1] = weighted_loss.sum() / loss_norm
         '''
-        loss[1] = (target_weights * loss_per_anchor).sum() / target_scores_sum
 
         # Bbox loss
         if fg_mask.sum():
