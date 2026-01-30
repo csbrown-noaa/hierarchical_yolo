@@ -89,7 +89,7 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
             self.hierarchy.ancestor_sibling_mask,
             self.hierarchy.root_mask
         )
-        loss[1] = hierarchical_class_loss.sum() / target_scores_sum
+        loss[1] = (hierarchical_class_loss * target_weights).sum() / target_scores_sum
             
 
         # 2. Compute Structural Loss (Normalized by Hierarchy Depth/Width)
