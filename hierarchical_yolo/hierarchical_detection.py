@@ -6,7 +6,7 @@ from hierarchical_loss.hierarchy import Hierarchy
 from hierarchical_loss.hierarchy_tensor_utils import (
     accumulate_hierarchy
 )
-from hierarchical_loss.hierarchical_loss import hierarchical_bce, hierarchical_conditional_bce
+from hierarchical_loss.hierarchical_loss import hierarchical_bce, hierarchical_conditional_bce, hierarchical_conditional_bce_soft_root
 
 class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
     """Criterion class for computing training losses for YOLOv8 object detection."""
