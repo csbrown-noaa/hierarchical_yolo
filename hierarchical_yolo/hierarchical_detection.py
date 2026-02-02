@@ -81,6 +81,7 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
         # target_scores: (B, N_anchors, N_classes)
         target_weights, target_indices = target_scores.max(dim=-1)
 
+        '''
         hierarchical_class_loss = hierarchical_conditional_bce_soft_root(
             pred_scores,
             target_weights,
@@ -90,7 +91,17 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
             self.hierarchy.root_mask
         )
         loss[1] = (hierarchical_class_loss * target_weights).sum() / target_scores_sum
-            
+        '''
+        hierarchical_class_loss = hierarchical_probabilistic_bce(
+            pred_scores,
+            target_weights,
+            target_indices,
+            self.hierarchy.ancestor_mask,
+            self.hierarchy.ancestor_sibling_mask,
+            self.hierarchy.root_mask
+        )
+        loss[1] = hierarchical_class_loss.sum() / target_scores_sum
+         
 
         # 2. Compute Structural Loss (Normalized by Hierarchy Depth/Width)
         # Returns: (B, N_anchors)
