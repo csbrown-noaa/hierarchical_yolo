@@ -1,0 +1,113 @@
+names:
+  0: accessory_and_item
+  1: airplane
+  2: animal
+  3: apple
+  4: appliance
+  5: appliance_and_electronics
+  6: backpack
+  7: ball_sport_equipment
+  8: banana
+  9: baseball bat
+  10: baseball glove
+  11: bear
+  12: bed
+  13: bench
+  14: bicycle
+  15: bird
+  16: board_sport_equipment
+  17: boat
+  18: book
+  19: bottle
+  20: bowl
+  21: broccoli
+  22: bus
+  23: cake
+  24: car
+  25: carrot
+  26: cat
+  27: cell phone
+  28: chair
+  29: clock
+  30: couch
+  31: cow
+  32: cup
+  33: dessert
+  34: dining table
+  35: dog
+  36: domestic_animal
+  37: donut
+  38: electronics
+  39: elephant
+  40: fire hydrant
+  41: food
+  42: fork
+  43: frisbee
+  44: fruit
+  45: furniture
+  46: giraffe
+  47: hair drier
+  48: handbag
+  49: home_and_office_item
+  50: horse
+  51: hot dog
+  52: indoor_object
+  53: keyboard
+  54: kitchenware
+  55: kite
+  56: knife
+  57: land_vehicle
+  58: laptop
+  59: livestock_animal
+  60: living_thing
+  61: microwave
+  62: motorcycle
+  63: mouse
+  64: object
+  65: orange
+  66: other_sports_equipment
+  67: outdoor_and_sports_object
+  68: oven
+  69: parking meter
+  70: person
+  71: personal_accessory
+  72: personal_care_item
+  73: pizza
+  74: potted plant
+  75: prepared_meal
+  76: refrigerator
+  77: remote
+  78: sandwich
+  79: scissors
+  80: sheep
+  81: sink
+  82: skateboard
+  83: skis
+  84: snowboard
+  85: spoon
+  86: sports ball
+  87: sports_equipment
+  88: stop sign
+  89: street_fixture
+  90: suitcase
+  91: surfboard
+  92: teddy bear
+  93: tennis racket
+  94: tie
+  95: toaster
+  96: toilet
+  97: toothbrush
+  98: traffic light
+  99: train
+  100: truck
+  101: tv
+  102: umbrella
+  103: vase
+  104: vegetable
+  105: vehicle
+  106: wild_animal
+  107: wine glass
+  108: zebra
+path: /home/noaa_brown/datasets/coco
+train: train2017/images
+val: val2017/images

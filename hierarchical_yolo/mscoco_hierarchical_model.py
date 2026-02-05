@@ -10,7 +10,7 @@ import urllib.request
 import zipfile
 
 
-YOLO_DATASET_YAML = resources.files('hierarchical_yolo.models.coco128').joinpath('hierarchicalcoco128.yaml')
+YOLO_DATASET_YAML = resources.files('hierarchical_yolo.models.coco128').joinpath('hierarchicalcoco.yaml')
 with open(YOLO_DATASET_YAML, 'r') as f:
     COCO_YOLO_ID_MAP = get_yolo_class_names(f)
 COCO_HIERARCHY_JSON = resources.files('hierarchical_yolo.models').joinpath('coco_hierarchy.json')
