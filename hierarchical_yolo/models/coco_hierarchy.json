@@ -77,7 +77,7 @@
     "spoon": "kitchenware",
     "bowl": "kitchenware",
     "personal_care_item": "indoor_object",
-    "hair dryer": "personal_care_item",
+    "hair drier": "personal_care_item",
     "toothbrush": "personal_care_item",
     "accessory_and_item": "object",
     "personal_accessory": "accessory_and_item",
