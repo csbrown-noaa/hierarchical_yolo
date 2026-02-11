@@ -53,10 +53,16 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
             reduce_op=torch.sum,
             identity_value=0.
         )
+        root_pred_scores = accumulate_hierarchy(
+            hierarchical_pred_scores,
+            self.hierarchy.index_tensor,
+            reduce_op=torch.max, # <--- The critical change
+            identity_value=-float('inf') # Identity for max is -inf
+        )
         #####
 
         _, target_bboxes, target_scores, fg_mask, _ = self.assigner(
-            torch.exp(hierarchical_pred_scores),
+            torch.exp(root_pred_scores),
             (pred_bboxes.detach() * stride_tensor).type(gt_bboxes.dtype),
             anchor_points * stride_tensor,
             gt_labels,
