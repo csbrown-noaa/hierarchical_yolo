@@ -45,18 +45,28 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
         # dfl_conf = pred_distri.view(batch_size, -1, 4, self.reg_max).detach().softmax(-1)
         # dfl_conf = (dfl_conf.amax(-1).mean(-1) + dfl_conf.amax(-1).amin(-1)) / 2
 
-        # TODO! When figuring out the target scores here, do we need to do anything to the pred_scores??
-        logsigmoid_pred_scores = torch.nn.LogSigmoid()(pred_scores)
+        # assign on marginals vs
         '''
+        logsigmoid_pred_scores = torch.nn.LogSigmoid()(pred_scores)
         hierarchical_pred_scores = accumulate_hierarchy(
             logsigmoid_pred_scores, 
             self.hierarchy.index_tensor, 
             reduce_op=torch.sum,
             identity_value=0.
         )
+        _, target_bboxes, target_scores, fg_mask, _ = self.assigner(
+            #torch.exp(hierarchical_pred_scores)
+            root_pred_scores,
+            (pred_bboxes.detach() * stride_tensor).type(gt_bboxes.dtype),
+            anchor_points * stride_tensor,
+            gt_labels,
+            gt_bboxes,
+            mask_gt,
+        )
         '''
+  
+        # assign on roots
         root_pred_scores = pred_scores[..., self.hierarchy.node_to_root].detach().sigmoid()
-        #####
 
         _, target_bboxes, target_scores, fg_mask, _ = self.assigner(
             #torch.exp(hierarchical_pred_scores)
@@ -70,32 +80,8 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
 
         target_scores_sum = max(target_scores.sum(), 1)
 
-        # Cls loss
-        # loss[1] = self.varifocal_loss(pred_scores, target_scores, target_labels) / target_scores_sum  # VFL way
-        '''
-        unnormalized_loss = hierarchical_bce(
-            pred_scores, 
-            target_scores, 
-            self.hierarchy.index_tensor
-        )
-        '''
-        
-        # 1. Prepare Inputs
-        # Get the class ID (index) and the Quality Score (weight) for each anchor
-        # target_scores: (B, N_anchors, N_classes)
         target_weights, target_indices = target_scores.max(dim=-1)
 
-        '''
-        hierarchical_class_loss = hierarchical_conditional_bce_soft_root(
-            pred_scores,
-            target_weights,
-            target_indices,
-            self.hierarchy.ancestor_mask,
-            self.hierarchy.ancestor_sibling_mask,
-            self.hierarchy.root_mask
-        )
-        loss[1] = (hierarchical_class_loss * target_weights).sum() / target_scores_sum
-        '''
         hierarchical_class_loss = hierarchical_probabilistic_bce(
             pred_scores,
             target_weights,
