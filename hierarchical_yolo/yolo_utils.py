@@ -10,6 +10,98 @@ from PIL import Image
 import yaml
 import torch
 
+import torch
+from torchvision.ops import batched_nms
+
+def clean_xyxy_nms(
+    prediction, 
+    conf_thres=0.25, 
+    iou_thres=0.45, 
+    classes=None, 
+    multi_label=True,
+    return_idxs=True
+):
+    """
+    Drop-in replacement for Ultralytics NMS that handles XYXY correctly.
+    """
+    # 1. Standardize Input
+    if isinstance(prediction, (list, tuple)):
+        prediction = prediction[0]
+
+    # Ensure (Batch, Boxes, Channels) layout
+    # This handles your input shape (3, 264, 8400) -> flips to (3, 8400, 264)
+    if prediction.shape[-1] > prediction.shape[-2]:
+        prediction = prediction.transpose(-1, -2)
+
+    output = []
+    keep_indices = []
+
+    for i, image_pred in enumerate(prediction):
+        boxes = image_pred[:, :4]   # x1, y1, x2, y2
+        cls_scores = image_pred[:, 4:] # Class scores
+
+        # 2. Multi-Label Expansion
+        # "Explode" boxes: if a box is 0.9 Person and 0.8 Car, it becomes 2 boxes.
+        if multi_label:
+            box_idx, class_idx = torch.where(cls_scores > conf_thres)
+            
+            filt_boxes = boxes[box_idx]
+            filt_scores = cls_scores[box_idx, class_idx]
+            filt_classes = class_idx
+            filt_orig_idxs = box_idx 
+        else:
+            # Standard Top-1 behavior
+            best_scores, best_classes = cls_scores.max(1)
+            mask = best_scores > conf_thres
+            
+            filt_boxes = boxes[mask]
+            filt_scores = best_scores[mask]
+            filt_classes = best_classes[mask]
+            filt_orig_idxs = torch.where(mask)[0]
+
+        # 3. THE GATEKEEPER (Your 'roots' logic)
+        # This removes all non-root classes BEFORE NMS sees them.
+        if classes is not None:
+            # Ensure classes tensor is on same device
+            if not isinstance(classes, torch.Tensor):
+                classes = torch.tensor(classes, device=prediction.device)
+            
+            # Create a mask: True only if the class is in 'roots'
+            keep_mask = torch.isin(filt_classes, classes)
+            
+            # Apply the mask: Non-roots are deleted here.
+            filt_boxes = filt_boxes[keep_mask]
+            filt_scores = filt_scores[keep_mask]
+            filt_classes = filt_classes[keep_mask]
+            filt_orig_idxs = filt_orig_idxs[keep_mask]
+
+        if filt_boxes.shape[0] == 0:
+            output.append(torch.zeros((0, 6), device=prediction.device))
+            keep_indices.append(torch.zeros((0), device=prediction.device))
+            continue
+
+        # 4. Run NMS on ONLY the surviving 'roots'
+        # batched_nms is "Class-Aware": Objects of different classes won't suppress 
+        # each other (unless you passed agnostic=True, which is not default).
+        keep = batched_nms(filt_boxes, filt_scores, filt_classes, iou_thres)
+
+        # 5. Map back to original 8400 indices
+        final_idxs = filt_orig_idxs[keep]
+        keep_indices.append(final_idxs)
+        
+        # Build standard output (N, 6)
+        if not return_idxs:
+            final_dets = torch.cat([
+                filt_boxes[keep], 
+                filt_scores[keep].unsqueeze(1), 
+                filt_classes[keep].float().unsqueeze(1)
+            ], dim=1)
+            output.append(final_dets)
+
+    if return_idxs:
+        return output, keep_indices
+    return output
+
 #TODO: Why doesn't this work???
 def apply_nms_to_raw_xyxy(
     prediction: torch.Tensor,
@@ -176,8 +268,9 @@ def postprocess_raw_output(
     # TODO: cache this
     roots = get_roots(hierarchy)
     # TODO: this logic is wrong.  We need to subset raw_yolo_output to root classes instead of using the `classes` arg
-    _, nms_idxs = non_max_suppression(raw_yolo_output, classes=roots, return_idxs=True, iou_thres=nms_iou_thres, conf_thres=nms_conf_thres, multi_label=True)
+    #_, nms_idxs = non_max_suppression(raw_yolo_output, classes=roots, return_idxs=True, iou_thres=nms_iou_thres, conf_thres=nms_conf_thres, multi_label=True)
     #_, nms_idxs = apply_nms_to_raw_xyxy(raw_yolo_output, classes=roots, return_idxs=True, iou_thres=nms_iou_thres, conf_thres=nms_conf_thres, multi_label=True)
+    _, nms_idxs = clean_xyxy_nms(raw_yolo_output, classes=roots, return_idxs=True, iou_thres=nms_iou_thres, conf_thres=nms_conf_thres, multi_label=True)
     for i, idx in enumerate(nms_idxs):
         flat_idx = idx.flatten().long()
         nms_output = raw_yolo_output[i].index_select(1, flat_idx)
