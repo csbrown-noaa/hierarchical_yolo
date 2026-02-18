@@ -14,7 +14,7 @@ def apply_nms_to_raw_xyxy(
     prediction: torch.Tensor,
     *args,
     **kwargs
-) -> list[torch.Tensor] | tuple[list[torch.Tensor], list[torch.Tensor]]]:
+) -> list[torch.Tensor] | tuple[list[torch.Tensor], list[torch.Tensor]]:
     """Wraps Ultralytics NMS to handle raw 'xyxy' model outputs correctly.
 
     This function acts as a middleware for `ultralytics.utils.ops.non_max_suppression`.
