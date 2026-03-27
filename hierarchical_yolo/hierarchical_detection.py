@@ -1,6 +1,8 @@
 from copy import copy
 import ultralytics.utils.loss
 import ultralytics.models
+import ultralytics
+import json
 import torch
 from hierarchical_loss.hierarchy import Hierarchy
 from hierarchical_loss.hierarchy_tensor_utils import (
@@ -130,20 +132,12 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
         return loss * batch_size, loss.detach()  # loss(box, cls, dfl)
 
 class HierarchicalDetectionTrainer(ultralytics.models.yolo.detect.DetectionTrainer):
-
-    '''
-        hierarchy = { child: parent }
-    '''
-    _hierarchy = None #unfortunately, we have to define the hierarchy here as a class variable
     
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.hierarchy = self.__class__._hierarchy
-        
+    # We completely removed the __init__ and the _hierarchy class variable!
+    
     def get_model(self, cfg=None, weights=None, verbose=True):
-        #TODO: override this
         """
-        Return a YOLO detection model.
+        Return a YOLO hierarchical detection model.
 
         Args:
             cfg (str, optional): Path to model configuration file.
@@ -153,18 +147,49 @@ class HierarchicalDetectionTrainer(ultralytics.models.yolo.detect.DetectionTrain
         Returns:
             (HierarchicalDetectionModel): YOLO hierarchical detection model.
         """
-        model = HierarchicalDetectionModel(cfg, nc=self.data["nc"], verbose=verbose and ultralytics.utils.RANK == -1, hierarchy=self.hierarchy)
+        # 1. Safely extract the path passed during DDP distribution
+        hierarchy_path = self.args.get('hierarchy_path')
+        hierarchy_obj = None
+        
+        if hierarchy_path:
+            # 2. Load the JSON (happens independently and safely on each GPU)
+            with open(hierarchy_path, 'r') as f:
+                raw_hierarchy = json.load(f)
+                
+            # 3. Grab the YOLO class ID mapping directly from the Trainer's parsed YAML.
+            # self.data['names'] looks like {0: 'fish', 1: 'shark'}
+            # We invert it to {'fish': 0, 'shark': 1} exactly like your old code did!
+            yolo_names = self.data['names']
+            name_to_id = {v: k for k, v in yolo_names.items()}
+            
+            # 4. Initialize the Hierarchy object locally
+            hierarchy_obj = Hierarchy(raw_hierarchy, name_to_id)
+        else:
+            print("WARNING: 'hierarchy_path' not provided in training arguments! Hierarchical loss may fail.")
+
+        # 5. Pass the newly built hierarchy object to the model
+        model = HierarchicalDetectionModel(
+            cfg, 
+            nc=self.data["nc"], 
+            verbose=verbose and ultralytics.utils.RANK == -1, 
+            hierarchy=hierarchy_obj
+        )
+        
         if weights:
             model.load(weights)
+            
         return model
 
     def get_validator(self):
-        #TODO override this
         """Return a DetectionValidator for YOLO model validation."""
         self.loss_names = "box_loss", "cls_loss", "dfl_loss"
         return HierarchicalDetectionValidator(
-            self.test_loader, save_dir=self.save_dir, args=copy(self.args), _callbacks=self.callbacks
+            self.test_loader, 
+            save_dir=self.save_dir, 
+            args=copy(self.args), 
+            _callbacks=self.callbacks
         )
+
 
 class HierarchicalDetectionModel(ultralytics.nn.tasks.DetectionModel):
     

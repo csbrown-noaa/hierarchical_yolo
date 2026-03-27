@@ -1,0 +1,169 @@
+import os
+import json
+import shutil
+import argparse
+
+import pycocowriter.coco2yolo
+from hierarchical_loss import hierarchy_utils
+from . import yolo_fs_utils
+
+def generate_flat_baseline(
+    current_depth: int, 
+    all_json_paths: list[str], 
+    lineages: dict, 
+    name_to_id: dict, 
+    master_categories: list,
+    data_dir: str,
+    flat_models_dir: str
+) -> None:
+    """
+    Builds a fully self-contained, densely indexed YOLO dataset for a specific 
+    phylogenetic depth.
+
+    This function extracts the taxonomic hierarchy at the given depth, maps 
+    all annotations to their ancestor categories at that depth, strips away 
+    unused categories, and dynamically re-indexes the remaining categories to 
+    a contiguous 1-to-N range. It then serializes the mapping and runs the 
+    YOLO conversion to finalize the dataset.
+
+    Parameters
+    ----------
+    current_depth : int
+        The targeted level of phylogenetic depth (0 = root) to restrict the model to.
+    all_json_paths : list[str]
+        A list of absolute file paths to the source COCO JSON files.
+    lineages : dict
+        A dictionary mapping each taxon to its full phylogenetic lineage from 
+        root to leaf.
+    name_to_id : dict
+        A dictionary mapping the master scientific names to their original 
+        COCO category IDs.
+    master_categories : list
+        The full, original list of category dictionaries from the master COCO file, 
+        used to preserve metadata during the rebuild.
+    data_dir : str
+        The root directory containing the original dataset, used as the source 
+        for image symlinks.
+    flat_models_dir : str
+        The destination directory where the resulting flat baseline dataset 
+        and mapping artifacts will be saved.
+
+    Returns
+    -------
+    None
+    """
+    print(f"\n{'='*50}\nBuilding Flat Baseline: Depth {current_depth}\n{'='*50}")
+    
+    depth_dest_dir = os.path.join(flat_models_dir, f"{current_depth:03d}")
+    staging_dir = os.path.join(depth_dest_dir, "staging")
+    os.makedirs(staging_dir, exist_ok=True)
+
+    # 1. Map and Cast all splits to the current depth
+    depth_map = hierarchy_utils.build_depth_map(lineages, current_depth, name_to_id)
+    
+    casted_cocos = {}
+    for path in all_json_paths:
+        with open(path, 'r') as f:
+            coco_dict = json.load(f)
+        casted_cocos[path] = hierarchy_utils.cast_coco_to_depth(coco_dict, depth_map)
+
+    # 2. Gather active IDs globally so Train/Val/Test share the exact same ID mapping
+    active_ids = hierarchy_utils.get_active_category_ids(*casted_cocos.values())
+    old_to_new, new_to_old = hierarchy_utils.build_dense_category_map(active_ids)
+
+    # 3. Restrict, Re-index, and Stage the JSONs
+    for path, casted_coco in casted_cocos.items():
+        final_coco = hierarchy_utils.restrict_and_reindex_coco(casted_coco, old_to_new, master_categories)
+        with open(os.path.join(staging_dir, os.path.basename(path)), 'w') as f:
+            json.dump(final_coco, f)
+
+    # 4. Serialize the Global Mapping Artifacts
+    map_path = os.path.join(depth_dest_dir, "category_index_map.json")
+    with open(map_path, 'w') as f:
+        # We save both mappings. YOLO classes are 0-indexed internally, 
+        # so YOLO class ID is exactly (Flat COCO ID - 1)
+        mapping_output = {
+            "flat_coco_id_to_master_coco_id": new_to_old,
+            "yolo_class_id_to_master_coco_id": {k - 1: v for k, v in new_to_old.items()}
+        }
+        json.dump(mapping_output, f, indent=4)
+
+    # 5. Convert to YOLO Format
+    yolo_fs_utils.enforce_symlinks(all_json_paths, data_dir, depth_dest_dir)
+    print("  -> Running Pycocowriter Conversion...")
+    pycocowriter.coco2yolo.coco2yolo(staging_dir, depth_dest_dir)
+    
+    shutil.rmtree(staging_dir)
+    print(f"Depth {current_depth} completed successfully.")
+
+
+def build_flat_baselines(data_dir: str) -> None:
+    """
+    Orchestrates the generation of flat YOLO baselines from a hierarchical dataset.
+    
+    This acts as the main entry point to parse the master hierarchy tree, discover 
+    all relevant COCO split files (train/val/test), and iteratively generate 
+    independent flat YOLO models for every available phylogenetic depth.
+
+    Parameters
+    ----------
+    data_dir : str
+        The base directory containing the source COCO JSONs, original imagery, 
+        and the 'hierarchy_data/hierarchy.json' file.
+
+    Returns
+    -------
+    None
+    """
+    print(f"Initializing Flat Baseline Generation for: {data_dir}")
+    
+    hierarchy_json = os.path.join(data_dir, 'hierarchy_data', 'hierarchy.json')
+    flat_models_dir = os.path.join(data_dir, 'alternate_depth_flat_models')
+    
+    if not os.path.exists(hierarchy_json):
+        print(f"Error: Hierarchy JSON not found at {hierarchy_json}")
+        return
+        
+    with open(hierarchy_json, 'r') as f:
+        hierarchy_tree = json.load(f)
+
+    lineages = hierarchy_utils.build_all_lineages(hierarchy_tree)
+    max_depth = max(len(lin) for lin in lineages.values()) - 1
+    
+    split_files = pycocowriter.coco2yolo.discover_coco_files(data_dir)
+    all_json_paths = split_files['train'] + split_files['val'] + split_files['test']
+    
+    if not all_json_paths:
+        print(f"Error: No COCO JSON files found in {data_dir}.")
+        return
+
+    with open(all_json_paths[0], 'r') as f:
+        reference_coco = json.load(f)
+        
+    master_categories = reference_coco.get('categories', [])
+    name_to_id = {cat['name']: cat['id'] for cat in master_categories}
+
+    # Generate baselines iteratively
+    for current_depth in range(max_depth + 1):
+        generate_flat_baseline(
+            current_depth=current_depth, 
+            all_json_paths=all_json_paths, 
+            lineages=lineages, 
+            name_to_id=name_to_id, 
+            master_categories=master_categories,
+            data_dir=data_dir,
+            flat_models_dir=flat_models_dir
+        )
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Generate flat YOLO baselines at varying taxonomic depths.")
+    parser.add_argument(
+        '--data_dir', 
+        type=str, 
+        default=os.path.expanduser('~/datasets/gfisher'),
+        help="Path to the root dataset directory containing the COCO JSONs and hierarchy_data/"
+    )
+    args = parser.parse_args()
+    
+    build_flat_baselines(args.data_dir)
