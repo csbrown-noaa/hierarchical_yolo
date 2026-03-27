@@ -59,21 +59,21 @@ def generate_flat_baseline(
     os.makedirs(staging_dir, exist_ok=True)
 
     # 1. Map and Cast all splits to the current depth
-    depth_map = hierarchy_utils.build_depth_map(lineages, current_depth, name_to_id)
+    depth_map = hierarchy_coco_utils.build_depth_map(lineages, current_depth, name_to_id)
     
     casted_cocos = {}
     for path in all_json_paths:
         with open(path, 'r') as f:
             coco_dict = json.load(f)
-        casted_cocos[path] = hierarchy_utils.cast_coco_to_depth(coco_dict, depth_map)
+        casted_cocos[path] = hierarchy_coco_utils.cast_coco_to_depth(coco_dict, depth_map)
 
     # 2. Gather active IDs globally so Train/Val/Test share the exact same ID mapping
-    active_ids = hierarchy_utils.get_active_category_ids(*casted_cocos.values())
-    old_to_new, new_to_old = hierarchy_utils.build_dense_category_map(active_ids)
+    active_ids = hierarchy_coco_utils.get_active_category_ids(*casted_cocos.values())
+    old_to_new, new_to_old = hierarchy_coco_utils.build_dense_category_map(active_ids)
 
     # 3. Restrict, Re-index, and Stage the JSONs
     for path, casted_coco in casted_cocos.items():
-        final_coco = hierarchy_utils.restrict_and_reindex_coco(casted_coco, old_to_new, master_categories)
+        final_coco = hierarchy_coco_utils.restrict_and_reindex_coco(casted_coco, old_to_new, master_categories)
         with open(os.path.join(staging_dir, os.path.basename(path)), 'w') as f:
             json.dump(final_coco, f)
 
@@ -127,7 +127,7 @@ def build_flat_baselines(data_dir: str) -> None:
     with open(hierarchy_json, 'r') as f:
         hierarchy_tree = json.load(f)
 
-    lineages = hierarchy_utils.build_all_lineages(hierarchy_tree)
+    lineages = hierarchy_coco_utils.build_all_lineages(hierarchy_tree)
     max_depth = max(len(lin) for lin in lineages.values()) - 1
     
     split_files = pycocowriter.coco2yolo.discover_coco_files(data_dir)
