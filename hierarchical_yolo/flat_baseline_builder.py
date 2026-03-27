@@ -4,7 +4,7 @@ import shutil
 import argparse
 
 import pycocowriter.coco2yolo
-from hierarchical_loss import hierarchy_utils
+from hierarchical_loss import hierarchy_coco_utils
 from . import yolo_fs_utils
 
 def generate_flat_baseline(
