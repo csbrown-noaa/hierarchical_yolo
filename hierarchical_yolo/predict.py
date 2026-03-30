@@ -2,6 +2,7 @@ import os
 import json
 import argparse
 import yaml
+import glob
 from PIL import Image
 from ultralytics import YOLO
 
@@ -22,8 +23,8 @@ def main():
     parser.add_argument(
         '--weights', 
         type=str, 
-        required=True, 
-        help="Path to the trained best.pt model weights"
+        default=None, 
+        help="Path to the trained best.pt model weights. If omitted, infers the most recently trained best.pt in the runs/ directory."
     )
     parser.add_argument(
         '--split', 
@@ -55,6 +56,16 @@ def main():
     
     args = parser.parse_args()
     
+    # 0. Infer weights if not provided
+    if not args.weights:
+        print("No weights provided via --weights. Searching for the most recent 'best.pt'...")
+        search_pattern = os.path.join("runs", "**", "weights", "best.pt")
+        weight_files = glob.glob(search_pattern, recursive=True)
+        if not weight_files:
+            raise FileNotFoundError("Could not automatically find any 'best.pt' files in the 'runs/' directory. Please specify --weights manually.")
+        args.weights = max(weight_files, key=os.path.getmtime)
+        print(f"-> Inferred latest weights: {args.weights}\n")
+        
     # 1. Resolve Config Paths based on data_dir
     data_yaml = os.path.join(args.data_dir, "train.yaml")
     hierarchy_json = os.path.join(args.data_dir, "hierarchy_data", "hierarchy.json")
