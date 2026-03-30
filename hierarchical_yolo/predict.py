@@ -13,30 +13,65 @@ from hierarchical_yolo.yolo_utils import (
 
 def main():
     parser = argparse.ArgumentParser(description="Export hierarchical predictions to a viewer-compatible COCO JSON.")
-    parser.add_argument('--data_yaml', type=str, required=True, help="Path to the dataset train.yaml")
-    parser.add_argument('--weights', type=str, required=True, help="Path to the trained best.pt model weights")
-    parser.add_argument('--hierarchy_json', type=str, required=True, help="Path to the master hierarchy.json")
-    parser.add_argument('--split', type=str, default='val', help="Dataset split to evaluate (e.g., 'val' or 'test')")
-    parser.add_argument('--url_prefix', type=str, required=True, help="Base URL for the images (e.g., 'https://storage.googleapis.com/...')")
-    parser.add_argument('--output', type=str, default='hierarchical_preds.json', help="Output JSON path")
+    parser.add_argument(
+        '--data_dir', 
+        type=str, 
+        required=True, 
+        help="Path to the dataset directory containing train.yaml and hierarchy_data/"
+    )
+    parser.add_argument(
+        '--weights', 
+        type=str, 
+        required=True, 
+        help="Path to the trained best.pt model weights"
+    )
+    parser.add_argument(
+        '--split', 
+        type=str, 
+        default='val', 
+        help="Dataset split to evaluate (e.g., 'val' or 'test')"
+    )
+    parser.add_argument(
+        '--url_prefix', 
+        type=str, 
+        required=True, 
+        help="Base URL for the images (e.g., 'https://storage.googleapis.com/...')"
+    )
+    parser.add_argument(
+        '--output', 
+        type=str, 
+        default='hierarchical_preds.json', 
+        help="Output JSON path"
+    )
     
     # Coarse NMS settings for wide-net downstream filtering
     parser.add_argument('--nms_conf_thres', type=float, default=0.01, help="Very permissive NMS confidence threshold")
     parser.add_argument('--nms_iou_thres', type=float, default=0.7, help="NMS IoU threshold")
     
+    # Hardware & Inference parameters
     parser.add_argument('--batch_size', type=int, default=32, help="Inference batch size")
     parser.add_argument('--imgsz', type=int, default=640, help="Inference image size")
+    parser.add_argument('--device', type=str, default='', help="Device to use for inference (e.g., '0' or 'cpu').")
     
     args = parser.parse_args()
     
-    # 1. Load Data Config & Resolve Image Directory
-    with open(args.data_yaml, 'r') as f:
+    # 1. Resolve Config Paths based on data_dir
+    data_yaml = os.path.join(args.data_dir, "train.yaml")
+    hierarchy_json = os.path.join(args.data_dir, "hierarchy_data", "hierarchy.json")
+    
+    if not os.path.exists(data_yaml):
+        raise FileNotFoundError(f"Missing train.yaml in {args.data_dir}")
+    if not os.path.exists(hierarchy_json):
+        raise FileNotFoundError(f"Missing hierarchy.json at {hierarchy_json}")
+    
+    with open(data_yaml, 'r') as f:
         data_cfg = yaml.safe_load(f)
         
     if args.split not in data_cfg:
-        raise ValueError(f"Split '{args.split}' not found in {args.data_yaml}")
+        raise ValueError(f"Split '{args.split}' not found in {data_yaml}")
         
-    base_path = data_cfg.get('path', os.path.dirname(args.data_yaml))
+    # Resolve image directory 
+    base_path = data_cfg.get('path', args.data_dir)
     img_dir_rel = data_cfg[args.split]
     if isinstance(img_dir_rel, list):
         img_dir_rel = img_dir_rel[0]
@@ -51,11 +86,15 @@ def main():
     # 2. Load Model & Reconstruct Hierarchy
     print(f"Loading model from {args.weights}...")
     model = YOLO(args.weights)
+    if args.device:
+        print(f"Pushing model to device: {args.device}")
+        model.to(args.device)
+        
     idx_to_node = model.names
     name_to_id = {v: k for k, v in idx_to_node.items()}
     
-    print(f"Loading hierarchy from {args.hierarchy_json}...")
-    with open(args.hierarchy_json, 'r') as f:
+    print(f"Loading hierarchy from {hierarchy_json}...")
+    with open(hierarchy_json, 'r') as f:
         raw_tree = json.load(f) # Expected {child_name: parent_name}
         
     # Convert name-based tree to ID-based tree for PyTorch NMS
