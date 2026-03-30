@@ -147,8 +147,9 @@ class HierarchicalDetectionTrainer(ultralytics.models.yolo.detect.DetectionTrain
         Returns:
             (HierarchicalDetectionModel): YOLO hierarchical detection model.
         """
-        # 1. Safely extract the path passed during DDP distribution
-        hierarchy_path = self.args.get('hierarchy_path')
+        import os
+        # 1. Safely extract the path passed during DDP distribution via environment variable
+        hierarchy_path = os.environ.get('HIERARCHY_PATH')
         hierarchy_obj = None
         
         if hierarchy_path:
@@ -189,7 +190,6 @@ class HierarchicalDetectionTrainer(ultralytics.models.yolo.detect.DetectionTrain
             args=copy(self.args), 
             _callbacks=self.callbacks
         )
-
 
 class HierarchicalDetectionModel(ultralytics.nn.tasks.DetectionModel):
     
