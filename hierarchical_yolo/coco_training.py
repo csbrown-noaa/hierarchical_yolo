@@ -107,13 +107,8 @@ def train_curriculum(
         # 1. Initialize our custom DDP-ready hierarchical trainer
         trainer = HierarchicalDetectionTrainer(overrides=overrides)
         
-        # 2. Inject the hierarchy path required by our custom trainer
-        # We safely handle both dict and SimpleNamespace attribute injection depending 
-        # on the Ultralytics backend version being used.
-        if isinstance(trainer.args, dict):
-            trainer.args['hierarchy_path'] = hierarchy_json_path
-        else:
-            setattr(trainer.args, 'hierarchy_path', hierarchy_json_path)
+        # 2. Inject the hierarchy path globally via environment variable so DDP workers can inherit it
+        os.environ["HIERARCHY_PATH"] = hierarchy_json_path
             
         # 3. Execute Training
         print(f"Training Stage {depth} for {epochs} epochs using weights: {current_weights}")
