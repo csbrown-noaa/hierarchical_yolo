@@ -98,8 +98,13 @@ def main():
     print(f"Loading model from {args.weights}...")
     model = YOLO(args.weights)
     if args.device:
-        print(f"Pushing model to device: {args.device}")
-        model.to(args.device)
+        # Handle comma-separated lists (e.g., "0,1,2") by grabbing the primary device
+        primary_device = args.device.split(',')[0].strip()
+        
+        # Translate raw digits (e.g., '0') to strict PyTorch format ('cuda:0')
+        device_str = f"cuda:{primary_device}" if primary_device.isdigit() else primary_device
+        print(f"Pushing model to device: {device_str}")
+        model.to(device_str)
         
     idx_to_node = model.names
     name_to_id = {v: k for k, v in idx_to_node.items()}
