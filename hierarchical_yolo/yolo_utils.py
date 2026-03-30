@@ -229,3 +229,91 @@ def get_yolo_class_names(yaml_file) -> dict[int, str]:
         # in some cases, although typically not for this format.
         class_names = {int(k): v for k, v in data['names'].items()}
         return class_names
+
+def soft_hierarchical_predictions(
+    model: ultralytics.YOLO,
+    hierarchy: dict[int, int],
+    images: list[Image.Image],
+    shape: tuple[int, int] = (640, 640),
+    nms_iou_thres: float | None = None,
+    nms_conf_thres: float | None = None,
+) -> tuple[list[torch.Tensor], list[torch.Tensor]]:
+    """
+    Runs a batch of images through the model and applies class-agnostic NMS
+    anchored at the hierarchical roots. 
+    
+    Returns spatial bounding boxes and the full unadulterated C-length soft 
+    score vectors (conditional probabilities) for every surviving box.
+    """
+    raw_output = yolo_raw_predict(model, images, shape)
+    boxes, pred_scores = postprocess_raw_output(
+        raw_output, hierarchy, nms_iou_thres=nms_iou_thres, nms_conf_thres=nms_conf_thres
+    )
+    return boxes, pred_scores
+
+
+def serialize_soft_hierarchical_predictions(
+    boxes_batch: list[torch.Tensor],
+    scores_batch: list[torch.Tensor],
+    image_metadata: list[dict],
+    idx_to_node: dict[int, str],
+    hierarchy_roots: list[int],
+    url_prefix: str,
+    input_shape: tuple[int, int] = (640, 640)
+) -> dict:
+    """
+    Serializes soft hierarchical predictions into an extended COCO JSON dictionary.
+    
+    Scales the YOLO (e.g., 640x640) coordinates back to native image dimensions 
+    and attaches the full soft score vector to each annotation for downstream 
+    dynamic filtering in a web viewer.
+    """
+    categories = [
+        {'name': idx_to_node[i], 'id': i}
+        for i in sorted(idx_to_node.keys())
+    ]
+    
+    images = []
+    annotations = []
+    ann_idx = 0
+    
+    # Determine the fallback root ID for annotations (e.g., 'Biota' ID)
+    root_category_id = hierarchy_roots[0] if hierarchy_roots else 0
+    
+    for img_idx, (boxes, scores, meta) in enumerate(zip(boxes_batch, scores_batch, image_metadata)):
+        images.append({
+            'id': meta['id'],
+            'file_name': meta['file_name'],
+            'coco_url': f"{url_prefix.rstrip('/')}/{meta['file_name']}",
+            'width': meta['width'],
+            'height': meta['height']
+        })
+        
+        scale_w = meta['width'] / input_shape[1]
+        scale_h = meta['height'] / input_shape[0]
+        
+        if boxes.numel() == 0:
+            continue
+            
+        # Iterate over the N filtered boxes and scores for this image
+        for box, score_vec in zip(boxes.T, scores.T):
+            x_min = int(box[0].item() * scale_w)
+            y_min = int(box[1].item() * scale_h)
+            w = int((box[2].item() - box[0].item()) * scale_w)
+            h = int((box[3].item() - box[1].item()) * scale_h)
+            
+            annotations.append({
+                'id': ann_idx,
+                'image_id': meta['id'],
+                'bbox': [x_min, y_min, w, h],
+                'area': w * h,
+                'category_id': root_category_id,
+                'scores': [f'{x.item():.5f}' for x in score_vec]
+            })
+            ann_idx += 1
+            
+    return {
+        'images': images,
+        'annotations': annotations,
+        'categories': categories
+    }
