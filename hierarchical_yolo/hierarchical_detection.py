@@ -9,6 +9,7 @@ from hierarchical_loss.hierarchy_tensor_utils import (
     accumulate_hierarchy
 )
 from hierarchical_loss.hierarchical_loss import hierarchical_bce, hierarchical_conditional_bce, hierarchical_conditional_bce_soft_root, hierarchical_probabilistic_bce
+from hierarchical_yolo.yolo_utils import conditionals_to_marginals
 
 class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
     """Criterion class for computing training losses for YOLOv8 object detection."""
@@ -131,7 +132,15 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
 
         return loss * batch_size, loss.detach()  # loss(box, cls, dfl)
 
+
 class HierarchicalDetectionTrainer(ultralytics.models.yolo.detect.DetectionTrainer):
+    """
+    Trainer class for YOLOv8 hierarchical object detection.
+
+    This class overrides the default YOLO trainer to inject the phylogenetic 
+    hierarchy into the model architecture and to utilize the custom hierarchical 
+    loss and validation logic in a Multi-GPU (DDP) safe manner.
+    """
     
     # We completely removed the __init__ and the _hierarchy class variable!
     
@@ -139,13 +148,19 @@ class HierarchicalDetectionTrainer(ultralytics.models.yolo.detect.DetectionTrain
         """
         Return a YOLO hierarchical detection model.
 
-        Args:
-            cfg (str, optional): Path to model configuration file.
-            weights (str, optional): Path to model weights.
-            verbose (bool): Whether to display model information.
+        Parameters
+        ----------
+        cfg : str, optional
+            Path to model configuration file. By default None.
+        weights : str, optional
+            Path to model weights. By default None.
+        verbose : bool, optional
+            Whether to display model information. By default True.
 
-        Returns:
-            (HierarchicalDetectionModel): YOLO hierarchical detection model.
+        Returns
+        -------
+        HierarchicalDetectionModel
+            YOLO hierarchical detection model.
         """
         import os
         # 1. Safely extract the path passed during DDP distribution via environment variable
@@ -191,7 +206,21 @@ class HierarchicalDetectionTrainer(ultralytics.models.yolo.detect.DetectionTrain
             _callbacks=self.callbacks
         )
 
+
 class HierarchicalDetectionModel(ultralytics.nn.tasks.DetectionModel):
+    """
+    A YOLO detection model augmented with hierarchical taxonomic awareness.
+
+    Parameters
+    ----------
+    *args : tuple
+        Positional arguments passed to the base `DetectionModel`.
+    hierarchy : Hierarchy | None, optional
+        The parsed `Hierarchy` object containing the taxonomic tree structure, 
+        masks, and node relationships.
+    **kwargs : dict
+        Keyword arguments passed to the base `DetectionModel`.
+    """
     
     def __init__(self, *args, hierarchy=None, **kwargs):
         super().__init__(*args, **kwargs)
@@ -201,6 +230,62 @@ class HierarchicalDetectionModel(ultralytics.nn.tasks.DetectionModel):
         """Initialize the loss criterion for the HierarchicalDetectionModel."""
         return v8HierarchicalDetectionLoss(self, hierarchy=self.hierarchy)
 
+
 class HierarchicalDetectionValidator(ultralytics.models.yolo.detect.DetectionValidator):
-    #TODO: this needs to basically be completely overhauled.
-    pass
+    """
+    Validator class for YOLOv8 hierarchical object detection.
+
+    This validator intercepts the model's conditional probability predictions 
+    and converts them into marginal probabilities before running standard Non-Max 
+    Suppression (NMS). This allows for accurate mAP calculation and optional 
+    apples-to-apples comparisons with flat baseline models by restricting evaluation 
+    to a specific subset of the taxonomy.
+
+    Parameters
+    ----------
+    *args : tuple
+        Positional arguments passed to the base `DetectionValidator`.
+    eval_subset_ids : list[int] | set[int] | torch.Tensor | None, optional
+        Specific category IDs to evaluate against. If provided, probabilities for 
+        classes outside this subset are zeroed out before NMS.
+    **kwargs : dict
+        Keyword arguments passed to the base `DetectionValidator`.
+    """
+    
+    def __init__(self, *args, eval_subset_ids=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.eval_subset_ids = eval_subset_ids
+
+    def postprocess(self, preds):
+        """
+        Intercepts the model predictions, calculates marginal probabilities 
+        down the phylogenetic tree, optionally masks specific categories, 
+        and passes them to the standard NMS.
+
+        Parameters
+        ----------
+        preds : tuple | torch.Tensor
+            The raw predictions from the YOLO `Detect` head.
+
+        Returns
+        -------
+        tuple | torch.Tensor
+            The modified prediction object where the conditional probabilities 
+            have been replaced by the computed marginals.
+        """
+        # Unwrap the model if it's DDP
+        model = self.model.module if hasattr(self.model, 'module') else self.model
+        hierarchy = getattr(model, 'hierarchy', None)
+        
+        if hierarchy is None:
+            print("WARNING: Hierarchy not found in model during validation. Falling back to default NMS.")
+            return super().postprocess(preds)
+
+        # Delegate the tensor shaping and math to our utility function
+        preds = conditionals_to_marginals(
+            preds, 
+            hierarchy.index_tensor, 
+            eval_subset_ids=self.eval_subset_ids
+        )
+            
+        return super().postprocess(preds)

@@ -12,6 +12,7 @@ import torch
 
 import torch
 from torchvision.ops import batched_nms
+from hierarchical_loss.hierarchy_tensor_utils import conditional_to_marginal
 
 
 def yolo_raw_predict(
@@ -317,3 +318,59 @@ def serialize_soft_hierarchical_predictions(
         'annotations': annotations,
         'categories': categories
     }
+
+def conditionals_to_marginals(
+    preds: tuple | torch.Tensor,
+    hierarchy_index_tensor: torch.Tensor,
+    eval_subset_ids: list[int] | set[int] | torch.Tensor | None = None
+) -> tuple | torch.Tensor:
+    """
+    YOLO-specific wrapper to convert conditional probabilities to marginal probabilities.
+
+    This function intercepts the Ultralytics tensor shapes (typically `[B, 4+C, Detections]`),
+    extracts the class probabilities, computes the hierarchical marginals down the 
+    phylogenetic tree, and optionally masks out specific categories for subset evaluation.
+
+    Parameters
+    ----------
+    preds : tuple | torch.Tensor
+        The raw predictions from the YOLO `Detect` head. During evaluation, this is 
+        typically a tuple where the first element is the inference tensor of shape 
+        `[B, 4+C, Detections]`.
+    hierarchy_index_tensor : torch.Tensor
+        An int tensor of shape `[N, M]` encoding the hierarchy, where `N` is the
+        number of classes and `M` is the maximum hierarchy depth.
+    eval_subset_ids : list[int] | set[int] | torch.Tensor | None, optional
+        A collection of category IDs to evaluate. If provided, all categories *not* in this subset will have their marginal probabilities zeroed out before NMS.
+        By default None (evaluates all classes).
+
+    Returns
+    -------
+    tuple | torch.Tensor
+        The modified prediction object (matching the input type) where the conditional 
+        probabilities have been replaced by the computed (and optionally masked) marginals.
+    """
+    is_tuple = isinstance(preds, tuple)
+    inference_out = preds[0] if is_tuple else preds
+    
+    # Extract Class Probabilities: [B, 4 + C, Detections] -> [B, Detections, C]
+    cls_probs = inference_out[:, 4:, :].transpose(1, 2)
+    
+    # Apply Hierarchical Math (Conditional -> Marginal)
+    marginal_probs = conditional_to_marginal(cls_probs, hierarchy_index_tensor)
+    
+    # Optional Subsetting
+    if eval_subset_ids is not None:
+        if not isinstance(eval_subset_ids, torch.Tensor):
+            eval_subset_ids = torch.tensor(list(eval_subset_ids), device=marginal_probs.device)
+            
+        mask = torch.ones(marginal_probs.shape[-1], dtype=torch.bool, device=marginal_probs.device)
+        mask[eval_subset_ids] = False
+        marginal_probs[..., mask] = 0.0
+        
+    # Pack it back up for Ultralytics NMS
+    inference_out[:, 4:, :] = marginal_probs.transpose(1, 2)
+    
+    if is_tuple:
+        return (inference_out, *preds[1:])
+    return inference_out
