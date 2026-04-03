@@ -30,6 +30,8 @@ def get_max_depth(hierarchy_json_path: str) -> int:
 
 def train_curriculum(
     data_dir: str, 
+    model_dir: str,
+    project_name: str,
     base_model: str = "yolov8n.pt", 
     shallow_epochs: int = 2, 
     final_epochs: int = 20,
@@ -50,6 +52,10 @@ def train_curriculum(
     ----------
     data_dir : str
         The root directory containing the prepared dataset and 'alternate_depth' curriculum folders.
+    model_dir : str
+        The root directory where models and logs will be saved.
+    project_name : str
+        The specific namespace for this experiment run.
     base_model : str, optional
         The starting weights for the Depth 0 model (default is "yolov8n.pt").
     shallow_epochs : int, optional
@@ -79,6 +85,7 @@ def train_curriculum(
     # We maintain a pointer to the weights, starting with the base model, 
     # and updating it to the best.pt of the previous stage after each loop.
     current_weights = base_model
+    project_path = os.path.join(model_dir, project_name)
     
     for depth in range(max_depth + 1):
         is_final_stage = (depth == max_depth)
@@ -95,7 +102,7 @@ def train_curriculum(
             "model": current_weights,
             "data": data_yaml,
             "epochs": epochs,
-            "project": os.path.join(data_dir, "runs"),
+            "project": project_path,
             "name": run_name,
             "exist_ok": True,  # Allows clean resuming if the script is interrupted and rerun
             "imgsz": imgsz,
@@ -135,6 +142,18 @@ if __name__ == "__main__":
         type=str, 
         default=os.path.expanduser('~/datasets/coco_hierarchical'),
         help="Path to the target root dataset directory containing the curriculum data."
+    )
+    parser.add_argument(
+        '--model_dir', 
+        type=str, 
+        required=True,
+        help="Path to the directory where models, runs, and artifacts will be saved."
+    )
+    parser.add_argument(
+        '--project_name', 
+        type=str, 
+        required=True,
+        help="The specific namespace for this experiment run (e.g., 'baseline_v1' or 'heavy_augs')."
     )
     parser.add_argument(
         '--base_model', 
@@ -182,6 +201,8 @@ if __name__ == "__main__":
     
     train_curriculum(
         data_dir=args.data_dir,
+        model_dir=args.model_dir,
+        project_name=args.project_name,
         base_model=args.base_model,
         shallow_epochs=args.shallow_epochs,
         final_epochs=args.final_epochs,

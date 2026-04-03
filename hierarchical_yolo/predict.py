@@ -21,10 +21,22 @@ def main():
         help="Path to the dataset directory containing train.yaml and hierarchy_data/"
     )
     parser.add_argument(
+        '--model_dir', 
+        type=str, 
+        required=True,
+        help="Path to the root directory where models and runs were saved."
+    )
+    parser.add_argument(
+        '--project_name', 
+        type=str, 
+        required=True,
+        help="The specific namespace/experiment run to evaluate."
+    )
+    parser.add_argument(
         '--weights', 
         type=str, 
         default=None, 
-        help="Path to the trained best.pt model weights. If omitted, infers the most recently trained best.pt in the runs/ directory."
+        help="Path to the trained best.pt model weights. If omitted, infers the most recently trained best.pt within the provided model_dir/project_name."
     )
     parser.add_argument(
         '--split', 
@@ -58,11 +70,12 @@ def main():
     
     # 0. Infer weights if not provided
     if not args.weights:
-        print("No weights provided via --weights. Searching for the most recent 'best.pt'...")
-        search_pattern = os.path.join("runs", "**", "weights", "best.pt")
+        project_path = os.path.join(args.model_dir, args.project_name)
+        print(f"No weights provided. Searching for the most recent 'best.pt' in {project_path}...")
+        search_pattern = os.path.join(project_path, "**", "weights", "best.pt")
         weight_files = glob.glob(search_pattern, recursive=True)
         if not weight_files:
-            raise FileNotFoundError("Could not automatically find any 'best.pt' files in the 'runs/' directory. Please specify --weights manually.")
+            raise FileNotFoundError(f"Could not automatically find any 'best.pt' files in '{project_path}'. Please specify --weights manually.")
         args.weights = max(weight_files, key=os.path.getmtime)
         print(f"-> Inferred latest weights: {args.weights}\n")
         
