@@ -4,6 +4,7 @@ import ultralytics.models
 import ultralytics
 import json
 import torch
+from ultralytics.utils import LOGGER
 from hierarchical_loss.hierarchy import Hierarchy
 from hierarchical_loss.hierarchy_tensor_utils import (
     accumulate_hierarchy
@@ -280,11 +281,40 @@ class HierarchicalDetectionValidator(ultralytics.models.yolo.detect.DetectionVal
             The modified prediction object where the conditional probabilities 
             have been replaced by the computed marginals.
         """
-        # Delegate the tensor shaping and math to our utility function
-        preds = conditionals_to_marginals(
-            preds, 
+        # 1. Diagnostic Logging
+        LOGGER.info(f"DEBUG - postprocess received preds of type: {type(preds)}")
+        if isinstance(preds, (list, tuple)):
+            LOGGER.info(f"DEBUG - preds length: {len(preds)}")
+            LOGGER.info(f"DEBUG - preds[0] type: {type(preds[0])}")
+            if isinstance(preds[0], torch.Tensor):
+                LOGGER.info(f"DEBUG - preds[0] shape: {preds[0].shape}")
+        elif isinstance(preds, torch.Tensor):
+            LOGGER.info(f"DEBUG - preds shape: {preds.shape}")
+
+        # 2. Unpack the payload
+        is_tuple = isinstance(preds, tuple)
+        is_list = isinstance(preds, list)
+
+        if is_tuple or is_list:
+            inference_out = preds[0]
+            remainder = preds[1:]
+        else:
+            inference_out = preds
+            remainder = ()
+
+        # 3. Delegate pure tensor math to our utility function
+        inference_out = conditionals_to_marginals(
+            inference_out, 
             self.hierarchy.index_tensor, 
             eval_subset_ids=self.eval_subset_ids
         )
             
+        # 4. Repackage the payload exactly as we received it
+        if is_tuple:
+            preds = (inference_out, *remainder)
+        elif is_list:
+            preds = [inference_out] + list(remainder)
+        else:
+            preds = inference_out
+
         return super().postprocess(preds)

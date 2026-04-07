@@ -320,10 +320,10 @@ def serialize_soft_hierarchical_predictions(
     }
 
 def conditionals_to_marginals(
-    preds: tuple | torch.Tensor,
+    preds: torch.Tensor,
     hierarchy_index_tensor: torch.Tensor,
     eval_subset_ids: list[int] | set[int] | torch.Tensor | None = None
-) -> tuple | torch.Tensor:
+) -> torch.Tensor:
     """
     YOLO-specific wrapper to convert conditional probabilities to marginal probabilities.
 
@@ -333,10 +333,8 @@ def conditionals_to_marginals(
 
     Parameters
     ----------
-    preds : tuple | torch.Tensor
-        The raw predictions from the YOLO `Detect` head. During evaluation, this is 
-        typically a tuple where the first element is the inference tensor of shape 
-        `[B, 4+C, Detections]`.
+    preds : torch.Tensor
+        The raw predictions from the YOLO `Detect` head. Shape `[B, 4+C, Detections]`.
     hierarchy_index_tensor : torch.Tensor
         An int tensor of shape `[N, M]` encoding the hierarchy, where `N` is the
         number of classes and `M` is the maximum hierarchy depth.
@@ -346,15 +344,12 @@ def conditionals_to_marginals(
 
     Returns
     -------
-    tuple | torch.Tensor
-        The modified prediction object (matching the input type) where the conditional 
+    torch.Tensor
+        The modified prediction tensor where the conditional 
         probabilities have been replaced by the computed (and optionally masked) marginals.
     """
-    is_tuple = isinstance(preds, tuple)
-    inference_out = preds[0] if is_tuple else preds
-    
     # Extract Class Probabilities: [B, 4 + C, Detections] -> [B, Detections, C]
-    cls_probs = inference_out[:, 4:, :].transpose(1, 2)
+    cls_probs = preds[:, 4:, :].transpose(1, 2)
     
     # Apply Hierarchical Math (Conditional -> Marginal)
     marginal_probs = conditional_to_marginal(cls_probs, hierarchy_index_tensor)
@@ -369,8 +364,6 @@ def conditionals_to_marginals(
         marginal_probs[..., mask] = 0.0
         
     # Pack it back up for Ultralytics NMS
-    inference_out[:, 4:, :] = marginal_probs.transpose(1, 2)
+    preds[:, 4:, :] = marginal_probs.transpose(1, 2)
     
-    if is_tuple:
-        return (inference_out, *preds[1:])
-    return inference_out
+    return preds
