@@ -199,11 +199,17 @@ class HierarchicalDetectionTrainer(ultralytics.models.yolo.detect.DetectionTrain
     def get_validator(self):
         """Return a DetectionValidator for YOLO model validation."""
         self.loss_names = "box_loss", "cls_loss", "dfl_loss"
+        
+        # Safely extract the hierarchy from the trainer's model 
+        model = self.model.module if hasattr(self.model, 'module') else self.model
+        hierarchy = getattr(model, 'hierarchy', None)
+        
         return HierarchicalDetectionValidator(
             self.test_loader, 
             save_dir=self.save_dir, 
             args=copy(self.args), 
-            _callbacks=self.callbacks
+            _callbacks=self.callbacks,
+            hierarchy=hierarchy
         )
 
 
@@ -252,9 +258,10 @@ class HierarchicalDetectionValidator(ultralytics.models.yolo.detect.DetectionVal
         Keyword arguments passed to the base `DetectionValidator`.
     """
     
-    def __init__(self, *args, eval_subset_ids=None, **kwargs):
+    def __init__(self, *args, eval_subset_ids=None, hierarchy=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.eval_subset_ids = eval_subset_ids
+        self.hierarchy = hierarchy
 
     def postprocess(self, preds):
         """
@@ -273,18 +280,10 @@ class HierarchicalDetectionValidator(ultralytics.models.yolo.detect.DetectionVal
             The modified prediction object where the conditional probabilities 
             have been replaced by the computed marginals.
         """
-        # Unwrap the model if it's DDP
-        model = self.model.module if hasattr(self.model, 'module') else self.model
-        hierarchy = getattr(model, 'hierarchy', None)
-        
-        if hierarchy is None:
-            print("WARNING: Hierarchy not found in model during validation. Falling back to default NMS.")
-            return super().postprocess(preds)
-
         # Delegate the tensor shaping and math to our utility function
         preds = conditionals_to_marginals(
             preds, 
-            hierarchy.index_tensor, 
+            self.hierarchy.index_tensor, 
             eval_subset_ids=self.eval_subset_ids
         )
             
