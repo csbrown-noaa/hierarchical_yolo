@@ -281,17 +281,7 @@ class HierarchicalDetectionValidator(ultralytics.models.yolo.detect.DetectionVal
             The modified prediction object where the conditional probabilities 
             have been replaced by the computed marginals.
         """
-        # 1. Diagnostic Logging
-        LOGGER.info(f"DEBUG - postprocess received preds of type: {type(preds)}")
-        if isinstance(preds, (list, tuple)):
-            LOGGER.info(f"DEBUG - preds length: {len(preds)}")
-            LOGGER.info(f"DEBUG - preds[0] type: {type(preds[0])}")
-            if isinstance(preds[0], torch.Tensor):
-                LOGGER.info(f"DEBUG - preds[0] shape: {preds[0].shape}")
-        elif isinstance(preds, torch.Tensor):
-            LOGGER.info(f"DEBUG - preds shape: {preds.shape}")
-
-        # 2. Unpack the payload
+        # Unpack the payload (handling Ultralytics framework tuples/lists vs raw tensors)
         is_tuple = isinstance(preds, tuple)
         is_list = isinstance(preds, list)
 
@@ -302,14 +292,14 @@ class HierarchicalDetectionValidator(ultralytics.models.yolo.detect.DetectionVal
             inference_out = preds
             remainder = ()
 
-        # 3. Delegate pure tensor math to our utility function
+        # Delegate pure tensor math to our utility function
         inference_out = conditionals_to_marginals(
             inference_out, 
             self.hierarchy.index_tensor, 
             eval_subset_ids=self.eval_subset_ids
         )
             
-        # 4. Repackage the payload exactly as we received it
+        # Repackage the payload exactly as we received it to maintain framework compatibility
         if is_tuple:
             preds = (inference_out, *remainder)
         elif is_list:
