@@ -306,6 +306,7 @@ def main():
         input_shape=(args.imgsz, args.imgsz)
     )
     
+    os.makedirs(os.path.dirname(args.output), exist_ok=True)
     with open(args.output, 'w') as f:
         json.dump(out_json, f)
         
