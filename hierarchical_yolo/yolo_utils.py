@@ -8,9 +8,7 @@ except:
 import torch
 from PIL import Image
 import yaml
-import torch
 
-import torch
 from torchvision.ops import batched_nms
 from hierarchical_loss.hierarchy_tensor_utils import conditional_to_marginal
 
@@ -34,8 +32,6 @@ def yolo_raw_predict(
         A list of PIL.Image.Image objects to be processed.
     shape : Tuple[int, int]
         The target (height, width) to resize images to for the model input.
-    cuda : bool, optional
-        If True, moves the input tensor to 'cuda'. By default False.
 
     Returns
     -------
@@ -150,8 +146,6 @@ def hierarchical_predict(
         A batch of images to perform prediction on, as PIL.Image objects.
     shape : tuple[int, int], optional
         The input image shape (height, width) for the model, by default (640, 640).
-    cuda : bool, optional
-        If True, the model will be run on a CUDA-enabled GPU, by default False.
     nms_iou_thres : float, optional
         IoU threshold for NMS. Passed to `postprocess_raw_output`.
     nms_conf_thres : float, optional
@@ -256,10 +250,9 @@ def soft_hierarchical_predictions(
 def serialize_soft_hierarchical_predictions(
     boxes_batch: list[torch.Tensor],
     scores_batch: list[torch.Tensor],
-    image_metadata: list[dict],
+    images_list: list[dict],
     idx_to_node: dict[int, str],
     hierarchy_roots: list[int],
-    url_prefix: str,
     input_shape: tuple[int, int] = (640, 640)
 ) -> dict:
     """
@@ -274,24 +267,15 @@ def serialize_soft_hierarchical_predictions(
         for i in sorted(idx_to_node.keys())
     ]
     
-    images = []
     annotations = []
     ann_idx = 0
     
     # Determine the fallback root ID for annotations (e.g., 'Biota' ID)
     root_category_id = hierarchy_roots[0] if hierarchy_roots else 0
     
-    for img_idx, (boxes, scores, meta) in enumerate(zip(boxes_batch, scores_batch, image_metadata)):
-        images.append({
-            'id': meta['id'],
-            'file_name': meta['file_name'],
-            'coco_url': f"{url_prefix.rstrip('/')}/{meta['file_name']}",
-            'width': meta['width'],
-            'height': meta['height']
-        })
-        
-        scale_w = meta['width'] / input_shape[1]
-        scale_h = meta['height'] / input_shape[0]
+    for boxes, scores, img_meta in zip(boxes_batch, scores_batch, images_list):
+        scale_w = img_meta['width'] / input_shape[1]
+        scale_h = img_meta['height'] / input_shape[0]
         
         if boxes.numel() == 0:
             continue
@@ -305,7 +289,7 @@ def serialize_soft_hierarchical_predictions(
             
             annotations.append({
                 'id': ann_idx,
-                'image_id': meta['id'],
+                'image_id': img_meta['id'],
                 'bbox': [x_min, y_min, w, h],
                 'area': w * h,
                 'category_id': root_category_id,
@@ -314,7 +298,7 @@ def serialize_soft_hierarchical_predictions(
             ann_idx += 1
             
     return {
-        'images': images,
+        'images': images_list, # Directly passes through the pre-patched unified dictionary
         'annotations': annotations,
         'categories': categories
     }
