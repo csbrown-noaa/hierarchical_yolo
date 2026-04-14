@@ -23,8 +23,8 @@ def generate_flat_baseline(
     This function extracts the taxonomic hierarchy at the given depth, maps 
     all annotations to their ancestor categories at that depth, strips away 
     unused categories, and dynamically re-indexes the remaining categories to 
-    a contiguous 1-to-N range. It then serializes the mapping and runs the 
-    YOLO conversion to finalize the dataset.
+    a contiguous 1-to-N range. It then runs the YOLO conversion to finalize 
+    the dataset.
 
     Parameters
     ----------
@@ -46,7 +46,7 @@ def generate_flat_baseline(
         for image symlinks.
     flat_models_dir : str
         The destination directory where the resulting flat baseline dataset 
-        and mapping artifacts will be saved.
+        will be saved.
 
     Returns
     -------
@@ -77,18 +77,7 @@ def generate_flat_baseline(
         with open(os.path.join(staging_dir, os.path.basename(path)), 'w') as f:
             json.dump(final_coco, f)
 
-    # 4. Serialize the Global Mapping Artifacts
-    map_path = os.path.join(depth_dest_dir, "category_index_map.json")
-    with open(map_path, 'w') as f:
-        # We save both mappings. YOLO classes are 0-indexed internally, 
-        # so YOLO class ID is exactly (Flat COCO ID - 1)
-        mapping_output = {
-            "flat_coco_id_to_master_coco_id": new_to_old,
-            "yolo_class_id_to_master_coco_id": {k - 1: v for k, v in new_to_old.items()}
-        }
-        json.dump(mapping_output, f, indent=4)
-
-    # 5. Convert to YOLO Format
+    # 4. Convert to YOLO Format (with intercepted symlinks)
     yolo_fs_utils.enforce_symlinks(all_json_paths, image_source_dir, depth_dest_dir)
     print("  -> Running Pycocowriter Conversion...")
     pycocowriter.coco2yolo.coco2yolo(staging_dir, depth_dest_dir)
