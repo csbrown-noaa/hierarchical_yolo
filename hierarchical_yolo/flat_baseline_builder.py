@@ -13,7 +13,7 @@ def generate_flat_baseline(
     lineages: dict, 
     name_to_id: dict, 
     master_categories: list,
-    data_dir: str,
+    image_source_dir: str,
     flat_models_dir: str
 ) -> None:
     """
@@ -41,8 +41,8 @@ def generate_flat_baseline(
     master_categories : list
         The full, original list of category dictionaries from the master COCO file, 
         used to preserve metadata during the rebuild.
-    data_dir : str
-        The root directory containing the original dataset, used as the source 
+    image_source_dir : str
+        The root directory containing the original dataset images, used as the source 
         for image symlinks.
     flat_models_dir : str
         The destination directory where the resulting flat baseline dataset 
@@ -89,7 +89,7 @@ def generate_flat_baseline(
         json.dump(mapping_output, f, indent=4)
 
     # 5. Convert to YOLO Format
-    yolo_fs_utils.enforce_symlinks(all_json_paths, data_dir, depth_dest_dir)
+    yolo_fs_utils.enforce_symlinks(all_json_paths, image_source_dir, depth_dest_dir)
     print("  -> Running Pycocowriter Conversion...")
     pycocowriter.coco2yolo.coco2yolo(staging_dir, depth_dest_dir)
     
@@ -97,7 +97,12 @@ def generate_flat_baseline(
     print(f"Depth {current_depth} completed successfully.")
 
 
-def build_flat_baselines(data_dir: str) -> None:
+def build_flat_baselines(
+    coco_dir: str, 
+    hierarchy_path: str, 
+    flat_models_dir: str, 
+    image_source_dir: str
+) -> None:
     """
     Orchestrates the generation of flat YOLO baselines from a hierarchical dataset.
     
@@ -107,34 +112,36 @@ def build_flat_baselines(data_dir: str) -> None:
 
     Parameters
     ----------
-    data_dir : str
-        The base directory containing the source COCO JSONs, original imagery, 
-        and the 'hierarchy_data/hierarchy.json' file.
+    coco_dir : str
+        The directory containing the staging master COCO JSONs.
+    hierarchy_path : str
+        The file path to the master hierarchy.json.
+    flat_models_dir : str
+        The destination directory where the flat baseline YOLO models will be generated.
+    image_source_dir : str
+        The root directory containing the original dataset images, used to enforce symlinks.
 
     Returns
     -------
     None
     """
-    print(f"Initializing Flat Baseline Generation for: {data_dir}")
+    print(f"Initializing Flat Baseline Generation from: {coco_dir}")
     
-    hierarchy_json = os.path.join(data_dir, 'hierarchy_data', 'hierarchy.json')
-    flat_models_dir = os.path.join(data_dir, 'alternate_depth_flat_models')
-    
-    if not os.path.exists(hierarchy_json):
-        print(f"Error: Hierarchy JSON not found at {hierarchy_json}")
+    if not os.path.exists(hierarchy_path):
+        print(f"Error: Hierarchy JSON not found at {hierarchy_path}")
         return
         
-    with open(hierarchy_json, 'r') as f:
+    with open(hierarchy_path, 'r') as f:
         hierarchy_tree = json.load(f)
 
     lineages = hierarchy_coco_utils.build_all_lineages(hierarchy_tree)
     max_depth = max(len(lin) for lin in lineages.values()) - 1
     
-    split_files = pycocowriter.coco2yolo.discover_coco_files(data_dir)
+    split_files = pycocowriter.coco2yolo.discover_coco_files(coco_dir)
     all_json_paths = split_files['train'] + split_files['val'] + split_files['test']
     
     if not all_json_paths:
-        print(f"Error: No COCO JSON files found in {data_dir}.")
+        print(f"Error: No COCO JSON files found in {coco_dir}.")
         return
 
     with open(all_json_paths[0], 'r') as f:
@@ -151,19 +158,17 @@ def build_flat_baselines(data_dir: str) -> None:
             lineages=lineages, 
             name_to_id=name_to_id, 
             master_categories=master_categories,
-            data_dir=data_dir,
+            image_source_dir=image_source_dir,
             flat_models_dir=flat_models_dir
         )
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate flat YOLO baselines at varying taxonomic depths.")
-    parser.add_argument(
-        '--data_dir', 
-        type=str, 
-        default=os.path.expanduser('~/datasets/gfisher'),
-        help="Path to the root dataset directory containing the COCO JSONs and hierarchy_data/"
-    )
+    parser.add_argument('--coco_dir', type=str, required=True, help="Path to the master COCO JSONs")
+    parser.add_argument('--hierarchy_path', type=str, required=True, help="Path to hierarchy.json")
+    parser.add_argument('--flat_models_dir', type=str, required=True, help="Output destination for YOLO datasets")
+    parser.add_argument('--image_source_dir', type=str, required=True, help="Path back to the raw image vault for symlinks")
     args = parser.parse_args()
     
-    build_flat_baselines(args.data_dir)
+    build_flat_baselines(args.coco_dir, args.hierarchy_path, args.flat_models_dir, args.image_source_dir)
