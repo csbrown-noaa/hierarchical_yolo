@@ -19,6 +19,14 @@ from hierarchical_loss.hierarchy_tensor_utils import (
 )
 from hierarchical_loss.hierarchical_loss import hierarchical_bce, hierarchical_conditional_bce, hierarchical_conditional_bce_soft_root, hierarchical_probabilistic_bce
 from hierarchical_yolo.yolo_utils import conditionals_to_marginals
+
+import ultralytics.utils.ops as ops
+try:
+    from ultralytics.utils.ops import non_max_suppression
+except ImportError:
+    from ultralytics.utils.nms import non_max_suppression
+
+from ultralytics.engine.results import Results
 from hierarchical_loss.path_utils import (
     optimal_hierarchical_path,
     batch_truncate_paths_marginals,
@@ -420,6 +428,11 @@ class HierarchicalYOLO(ultralytics.YOLO):
     Validators, and Models without requiring framework monkey-patching.
     """
     
+    def __init__(self, model="yolov8n.pt", task=None, hierarchy=None, **kwargs):
+        super().__init__(model=model, task=task, **kwargs)
+        if hierarchy is not None:
+            self.model.hierarchy = hierarchy
+
     @property
     def task_map(self):
         """Overrides the internal registry to use our custom hierarchical classes."""
@@ -429,3 +442,11 @@ class HierarchicalYOLO(ultralytics.YOLO):
         base_map["detect"]["model"] = HierarchicalDetectionModel
         base_map["detect"]["predictor"] = HierarchicalDetectionPredictor
         return base_map
+        
+    def val(self, **kwargs):
+        """Intercepts validation call to pass dynamic attributes to the inner PyTorch model."""
+        eval_subset_ids = kwargs.pop('eval_subset_ids', None)
+        if eval_subset_ids is not None:
+            self.model.eval_subset_ids = eval_subset_ids
+        
+        return super().val(**kwargs)
