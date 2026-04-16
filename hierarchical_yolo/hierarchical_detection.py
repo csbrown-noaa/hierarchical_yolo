@@ -5,12 +5,25 @@ import ultralytics
 import json
 import torch
 from ultralytics.utils import LOGGER
+
+import ultralytics.utils.ops as ops
+try:
+    from ultralytics.utils.ops import non_max_suppression
+except ImportError:
+    from ultralytics.utils.nms import non_max_suppression
+
+from ultralytics.engine.results import Results
 from hierarchical_loss.hierarchy import Hierarchy
 from hierarchical_loss.hierarchy_tensor_utils import (
     accumulate_hierarchy
 )
 from hierarchical_loss.hierarchical_loss import hierarchical_bce, hierarchical_conditional_bce, hierarchical_conditional_bce_soft_root, hierarchical_probabilistic_bce
 from hierarchical_yolo.yolo_utils import conditionals_to_marginals
+from hierarchical_loss.path_utils import (
+    optimal_hierarchical_path,
+    batch_truncate_paths_marginals,
+    batch_filter_empty_paths
+)
 
 class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
     """Criterion class for computing training losses for YOLOv8 object detection."""
@@ -315,6 +328,92 @@ class HierarchicalDetectionValidator(ultralytics.models.yolo.detect.DetectionVal
         return super().postprocess(preds)
 
 
+class HierarchicalDetectionPredictor(ultralytics.models.yolo.detect.DetectionPredictor):
+    """
+    Predictor class for YOLOv8 hierarchical object detection.
+    
+    Applies greedy path search and marginal truncation to output the deepest 
+    confident node in the taxonomy tree for each detection.
+    """
+    def postprocess(self, preds, img, orig_imgs):
+        """
+        Intercepts raw model predictions, performs root-anchored NMS, computes 
+        the optimal hierarchical path, and truncates at the confidence threshold.
+        """
+        hierarchy = getattr(self.model.model, 'hierarchy', None)
+        if hierarchy is None:
+            return super().postprocess(preds, img, orig_imgs)
+
+        preds_tensor = preds[0] if isinstance(preds, tuple) else preds
+
+        # 1. Raw Output & Root-Anchored NMS
+        # return_idxs=True is critical to extract the full score vectors
+        _, nms_idxs = non_max_suppression(
+            preds_tensor,
+            self.args.conf,
+            self.args.iou,
+            agnostic=self.args.agnostic_nms,
+            max_det=self.args.max_det,
+            classes=hierarchy.roots.tolist(),
+            multi_label=True,
+            return_idxs=True
+        )
+
+        # 2. Extract Full Score Vectors & Compute Optimal Paths
+        bscores = []
+        all_boxes = []
+        for i, idx in enumerate(nms_idxs):
+            flat_idx = idx.flatten().long()
+            # nms_output shape: (4+C, N_filtered)
+            nms_output = preds_tensor[i].index_select(1, flat_idx)
+            
+            boxes = nms_output[:4, :]  # (4, N_filtered)
+            scores = nms_output[4:, :] # (C, N_filtered)
+            
+            all_boxes.append(boxes)
+            bscores.append(scores)
+        
+        # Greedy Path Traversal
+        raw_paths, raw_path_scores = optimal_hierarchical_path(
+            bscores, 
+            hierarchy.parent_child_tensor_tree, 
+            hierarchy.roots
+        )
+        
+        # 3. Truncate using Marginal Probabilities (Recycle NMS Conf)
+        trunc_paths, trunc_scores = batch_truncate_paths_marginals(
+            raw_paths, raw_path_scores, threshold=self.args.conf
+        )
+        
+        # Filter out paths that became completely empty
+        filtered_batch = batch_filter_empty_paths(
+            all_boxes, trunc_paths, trunc_scores
+        )
+
+        # 4. Translate back to Ultralytics `Results` Format (Deepest Confident Node)
+        results = []
+        for i, (boxes, paths, scores) in enumerate(filtered_batch):
+            boxes_t = boxes.T  # (N_filtered, 4)
+            
+            orig_img = orig_imgs[i] if isinstance(orig_imgs, list) else orig_imgs
+            if not isinstance(orig_imgs, torch.Tensor) and boxes_t.numel() > 0:
+                boxes_t[:, :4] = ops.scale_boxes(img.shape[2:], boxes_t[:, :4], orig_img.shape)
+
+            # Standard YOLO format: (N, 6) -> [x1, y1, x2, y2, conf, cls]
+            final_pred = torch.zeros((len(paths), 6), device=preds_tensor.device)
+            if len(paths) > 0:
+                final_pred[:, :4] = boxes_t
+                # Conf: Marginal score of that deepest node
+                final_pred[:, 4] = torch.tensor([s[-1].item() for s in scores], device=preds_tensor.device, dtype=torch.float)
+                # Cls: The deepest node is the last element
+                final_pred[:, 5] = torch.tensor([p[-1] for p in paths], device=preds_tensor.device, dtype=torch.float)
+
+            img_path = self.batch[0][i] if hasattr(self, 'batch') and self.batch is not None else f"image_{i}"
+            results.append(Results(orig_img, path=img_path, names=self.model.names, boxes=final_pred))
+            
+        return results
+
+
 class HierarchicalYOLO(ultralytics.YOLO):
     """
     A native YOLO wrapper that automatically routes to Hierarchical Trainers, 
@@ -328,4 +427,5 @@ class HierarchicalYOLO(ultralytics.YOLO):
         base_map["detect"]["trainer"] = HierarchicalDetectionTrainer
         base_map["detect"]["validator"] = HierarchicalDetectionValidator
         base_map["detect"]["model"] = HierarchicalDetectionModel
+        base_map["detect"]["predictor"] = HierarchicalDetectionPredictor
         return base_map
