@@ -292,11 +292,16 @@ class HierarchicalDetectionValidator(ultralytics.models.yolo.detect.DetectionVal
             inference_out = preds
             remainder = ()
 
+        # 1. Look for custom attributes dynamically attached to the PyTorch model 
+        # (for standalone eval), and fallback to self attributes (for training loop)
+        subset_ids = getattr(self.model, 'eval_subset_ids', self.eval_subset_ids)
+        active_hierarchy = getattr(self.model, 'hierarchy', self.hierarchy)
+
         # Delegate pure tensor math to our utility function
         inference_out = conditionals_to_marginals(
             inference_out, 
-            self.hierarchy.index_tensor, 
-            eval_subset_ids=self.eval_subset_ids
+            active_hierarchy.index_tensor, 
+            eval_subset_ids=subset_ids
         )
             
         # Repackage the payload exactly as we received it to maintain framework compatibility
@@ -308,3 +313,19 @@ class HierarchicalDetectionValidator(ultralytics.models.yolo.detect.DetectionVal
             preds = inference_out
 
         return super().postprocess(preds)
+
+
+class HierarchicalYOLO(ultralytics.YOLO):
+    """
+    A native YOLO wrapper that automatically routes to Hierarchical Trainers, 
+    Validators, and Models without requiring framework monkey-patching.
+    """
+    
+    @property
+    def task_map(self):
+        """Overrides the internal registry to use our custom hierarchical classes."""
+        base_map = super().task_map
+        base_map["detect"]["trainer"] = HierarchicalDetectionTrainer
+        base_map["detect"]["validator"] = HierarchicalDetectionValidator
+        base_map["detect"]["model"] = HierarchicalDetectionModel
+        return base_map
