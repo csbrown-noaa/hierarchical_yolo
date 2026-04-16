@@ -231,11 +231,11 @@ def run_batched_inference(
 
 def main():
     parser = argparse.ArgumentParser(description="Export hierarchical predictions to a viewer-compatible COCO JSON.")
-    parser.add_argument('--data_dir', type=str, required=True, help="Path to the dataset directory containing train.yaml and hierarchy_data/")
+    parser.add_argument('--workspace_dir', type=str, required=True, help="Path to the compiled hierarchical workspace.")
     parser.add_argument('--model_dir', type=str, required=True, help="Path to the root directory where models and runs were saved.")
     parser.add_argument('--project_name', type=str, required=True, help="The specific namespace/experiment run to evaluate.")
     parser.add_argument('--weights', type=str, default=None, help="Path to trained best.pt. Inferred automatically if omitted.")
-    parser.add_argument('--split', type=str, default='val', help="Dataset split to evaluate (e.g., 'val' or 'test')")
+    parser.add_argument('--split', type=str, default='val', help="Dataset split to evaluate (must match pycocowriter YAML key).")
     parser.add_argument('--coco_source', type=str, default=None, help="Optional path to a base COCO JSON to inherit 'images' metadata from.")
     parser.add_argument('--output', type=str, default='hierarchical_preds.json', help="Output JSON path")
     parser.add_argument('--nms_conf_thres', type=float, default=0.01, help="Very permissive NMS confidence threshold")
@@ -248,12 +248,12 @@ def main():
     # 1. Resolve Weights
     weights_path = args.weights if args.weights else resolve_latest_weights(args.model_dir, args.project_name)
         
-    # 2. Resolve Paths
-    data_yaml = os.path.join(args.data_dir, "train.yaml")
-    hierarchy_json = os.path.join(args.data_dir, "hierarchy_data", "hierarchy.json")
+    # 2. Resolve Paths internally via the workspace
+    data_yaml = os.path.join(args.workspace_dir, "master_yolo", "train.yaml")
+    hierarchy_json = os.path.join(args.workspace_dir, "hierarchy.json")
     
     if not os.path.exists(data_yaml):
-        raise FileNotFoundError(f"Missing train.yaml in {args.data_dir}")
+        raise FileNotFoundError(f"Missing leaf-node dataset YAML in {args.workspace_dir}/master_yolo/")
     if not os.path.exists(hierarchy_json):
         raise FileNotFoundError(f"Missing hierarchy.json at {hierarchy_json}")
         
