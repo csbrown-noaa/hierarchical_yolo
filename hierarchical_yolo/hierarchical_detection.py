@@ -33,6 +33,106 @@ from hierarchical_loss.path_utils import (
     batch_filter_empty_paths
 )
 
+def _hierarchical_postprocess(preds, hierarchy, args, eval_subset_ids=None):
+    """
+    Shared post-processing engine for both Validation and Prediction.
+    Converts to marginals, runs Root-Anchored NMS, traverses the hierarchy,
+    and cleanly snaps to the active vocabulary tier (if provided).
+    """
+    preds_tensor = preds[0] if isinstance(preds, (tuple, list)) else preds
+
+    # 1. Convert to true Marginals natively so NMS and greedy traversal use exact math
+    marginals_tensor = conditionals_to_marginals(
+        preds_tensor, 
+        hierarchy.index_tensor, 
+        eval_subset_ids=None # Do not mask yet; allow uninhibited traversal
+    )
+
+    # 2. Raw Output & Root-Anchored NMS
+    _, nms_idxs = non_max_suppression(
+        marginals_tensor,
+        args.conf,
+        args.iou,
+        agnostic=args.agnostic_nms,
+        max_det=args.max_det,
+        classes=hierarchy.roots.tolist(),
+        multi_label=True,
+        return_idxs=True
+    )
+
+    # 3. Extract Full Score Vectors & Compute Optimal Paths
+    bscores = []
+    all_boxes = []
+    for i, idx in enumerate(nms_idxs):
+        flat_idx = idx.flatten().long()
+        # nms_output shape: (4+C, N_filtered)
+        nms_output = marginals_tensor[i].index_select(1, flat_idx)
+        
+        all_boxes.append(nms_output[:4, :])
+        bscores.append(nms_output[4:, :])
+    
+    # Greedy Path Traversal
+    raw_paths, raw_path_scores = optimal_hierarchical_path(
+        bscores, 
+        hierarchy.parent_child_tensor_tree, 
+        hierarchy.roots
+    )
+    
+    # 4. Truncate using Marginal Probabilities
+    trunc_paths, trunc_scores = batch_truncate_paths_marginals(
+        raw_paths, raw_path_scores, threshold=args.conf
+    )
+
+    # 5. Snap-to-Vocabulary ("Casting Up")
+    if eval_subset_ids is not None:
+        if isinstance(eval_subset_ids, torch.Tensor):
+            eval_subset_ids = eval_subset_ids.tolist()
+        eval_subset_set = set(eval_subset_ids)
+
+        snapped_paths = []
+        snapped_scores = []
+        for p_list, s_list in zip(trunc_paths, trunc_scores):
+            new_p_list = []
+            new_s_list = []
+            for path, score_path in zip(p_list, s_list):
+                valid_idx = -1
+                # Walk backward from the deepest node to find an allowed vocabulary hit
+                for i in range(len(path) - 1, -1, -1):
+                    if path[i] in eval_subset_set:
+                        valid_idx = i
+                        break
+                if valid_idx != -1:
+                    new_p_list.append(path[:valid_idx+1])
+                    new_s_list.append(score_path[:valid_idx+1])
+                else:
+                    new_p_list.append([]) # Completely invalid path
+                    new_s_list.append([])
+            snapped_paths.append(new_p_list)
+            snapped_scores.append(new_s_list)
+        trunc_paths, trunc_scores = snapped_paths, snapped_scores
+    
+    # Filter out paths that became completely empty
+    filtered_batch = batch_filter_empty_paths(
+        all_boxes, trunc_paths, trunc_scores
+    )
+
+    # 6. Translate back to standard Ultralytics (N, 6) tensor arrays
+    results_tensors = []
+    for i, (boxes, paths, scores) in enumerate(filtered_batch):
+        boxes_t = boxes.T  # (N_filtered, 4)
+        
+        final_pred = torch.zeros((len(paths), 6), device=preds_tensor.device)
+        if len(paths) > 0:
+            final_pred[:, :4] = boxes_t
+            # Conf: True Marginal score of the deepest surviving node
+            final_pred[:, 4] = torch.tensor([s[-1].item() for s in scores], device=preds_tensor.device, dtype=torch.float)
+            # Cls: ID of the deepest surviving node
+            final_pred[:, 5] = torch.tensor([p[-1] for p in paths], device=preds_tensor.device, dtype=torch.float)
+        
+        results_tensors.append(final_pred)
+        
+    return results_tensors
+
 class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
     """Criterion class for computing training losses for YOLOv8 object detection."""
     
@@ -287,53 +387,22 @@ class HierarchicalDetectionValidator(ultralytics.models.yolo.detect.DetectionVal
 
     def postprocess(self, preds):
         """
-        Intercepts the model predictions, calculates marginal probabilities 
-        down the phylogenetic tree, optionally masks specific categories, 
-        and passes them to the standard NMS.
-
-        Parameters
-        ----------
-        preds : tuple | torch.Tensor
-            The raw predictions from the YOLO `Detect` head.
-
-        Returns
-        -------
-        tuple | torch.Tensor
-            The modified prediction object where the conditional probabilities 
-            have been replaced by the computed marginals.
+        Intercepts the model predictions, routes them through the shared 
+        hierarchical postprocessing engine, and optionally casts predictions 
+        up to the allowed vocabulary tier.
         """
-        # Unpack the payload (handling Ultralytics framework tuples/lists vs raw tensors)
-        is_tuple = isinstance(preds, tuple)
-        is_list = isinstance(preds, list)
-
-        if is_tuple or is_list:
-            inference_out = preds[0]
-            remainder = preds[1:]
-        else:
-            inference_out = preds
-            remainder = ()
-
-        # 1. Look for custom attributes dynamically attached to the PyTorch model 
-        # (for standalone eval), and fallback to self attributes (for training loop)
         subset_ids = getattr(self.model, 'eval_subset_ids', self.eval_subset_ids)
         active_hierarchy = getattr(self.model, 'hierarchy', self.hierarchy)
 
-        # Delegate pure tensor math to our utility function
-        inference_out = conditionals_to_marginals(
-            inference_out, 
-            active_hierarchy.index_tensor, 
+        if active_hierarchy is None:
+            return super().postprocess(preds)
+
+        return _hierarchical_postprocess(
+            preds, 
+            active_hierarchy, 
+            self.args, 
             eval_subset_ids=subset_ids
         )
-            
-        # Repackage the payload exactly as we received it to maintain framework compatibility
-        if is_tuple:
-            preds = (inference_out, *remainder)
-        elif is_list:
-            preds = [inference_out] + list(remainder)
-        else:
-            preds = inference_out
-
-        return super().postprocess(preds)
 
 
 class HierarchicalDetectionPredictor(ultralytics.models.yolo.detect.DetectionPredictor):
@@ -345,76 +414,23 @@ class HierarchicalDetectionPredictor(ultralytics.models.yolo.detect.DetectionPre
     """
     def postprocess(self, preds, img, orig_imgs):
         """
-        Intercepts raw model predictions, performs root-anchored NMS, computes 
-        the optimal hierarchical path, and truncates at the confidence threshold.
+        Intercepts raw model predictions, runs the shared hierarchical postprocessor,
+        and packages the results back into Ultralytics Results objects.
         """
         hierarchy = getattr(self.model.model, 'hierarchy', None)
         if hierarchy is None:
             return super().postprocess(preds, img, orig_imgs)
 
-        preds_tensor = preds[0] if isinstance(preds, tuple) else preds
+        # 1. Run the unified processing engine (Predictor natively uses the full taxonomy)
+        results_tensors = _hierarchical_postprocess(preds, hierarchy, self.args)
 
-        # 1. Raw Output & Root-Anchored NMS
-        # return_idxs=True is critical to extract the full score vectors
-        _, nms_idxs = non_max_suppression(
-            preds_tensor,
-            self.args.conf,
-            self.args.iou,
-            agnostic=self.args.agnostic_nms,
-            max_det=self.args.max_det,
-            classes=hierarchy.roots.tolist(),
-            multi_label=True,
-            return_idxs=True
-        )
-
-        # 2. Extract Full Score Vectors & Compute Optimal Paths
-        bscores = []
-        all_boxes = []
-        for i, idx in enumerate(nms_idxs):
-            flat_idx = idx.flatten().long()
-            # nms_output shape: (4+C, N_filtered)
-            nms_output = preds_tensor[i].index_select(1, flat_idx)
-            
-            boxes = nms_output[:4, :]  # (4, N_filtered)
-            scores = nms_output[4:, :] # (C, N_filtered)
-            
-            all_boxes.append(boxes)
-            bscores.append(scores)
-        
-        # Greedy Path Traversal
-        raw_paths, raw_path_scores = optimal_hierarchical_path(
-            bscores, 
-            hierarchy.parent_child_tensor_tree, 
-            hierarchy.roots
-        )
-        
-        # 3. Truncate using Marginal Probabilities (Recycle NMS Conf)
-        trunc_paths, trunc_scores = batch_truncate_paths_marginals(
-            raw_paths, raw_path_scores, threshold=self.args.conf
-        )
-        
-        # Filter out paths that became completely empty
-        filtered_batch = batch_filter_empty_paths(
-            all_boxes, trunc_paths, trunc_scores
-        )
-
-        # 4. Translate back to Ultralytics `Results` Format (Deepest Confident Node)
+        # 2. Box Scaling & Translation back to Ultralytics `Results` UI Format
         results = []
-        for i, (boxes, paths, scores) in enumerate(filtered_batch):
-            boxes_t = boxes.T  # (N_filtered, 4)
-            
+        for i, final_pred in enumerate(results_tensors):
             orig_img = orig_imgs[i] if isinstance(orig_imgs, list) else orig_imgs
-            if not isinstance(orig_imgs, torch.Tensor) and boxes_t.numel() > 0:
-                boxes_t[:, :4] = ops.scale_boxes(img.shape[2:], boxes_t[:, :4], orig_img.shape)
-
-            # Standard YOLO format: (N, 6) -> [x1, y1, x2, y2, conf, cls]
-            final_pred = torch.zeros((len(paths), 6), device=preds_tensor.device)
-            if len(paths) > 0:
-                final_pred[:, :4] = boxes_t
-                # Conf: Marginal score of that deepest node
-                final_pred[:, 4] = torch.tensor([s[-1].item() for s in scores], device=preds_tensor.device, dtype=torch.float)
-                # Cls: The deepest node is the last element
-                final_pred[:, 5] = torch.tensor([p[-1] for p in paths], device=preds_tensor.device, dtype=torch.float)
+            
+            if not isinstance(orig_imgs, torch.Tensor) and final_pred.shape[0] > 0:
+                final_pred[:, :4] = ops.scale_boxes(img.shape[2:], final_pred[:, :4], orig_img.shape)
 
             img_path = self.batch[0][i] if hasattr(self, 'batch') and self.batch is not None else f"image_{i}"
             results.append(Results(orig_img, path=img_path, names=self.model.names, boxes=final_pred))
