@@ -40,15 +40,15 @@ unzip train2017.zip
 unzip annotations_trainval2017.zip
 
 # Move JSON splits to the root of the staging directory
-mv annotations/instances_val2017.json ./
-mv annotations/instances_train2017.json ./
+mv annotations/instances_val2017.json ./val.json
+mv annotations/instances_train2017.json ./train.json
 
 # Move the unzipped images into the expected pycocowriter structure
-mkdir instances_val2017
-mv val2017 instances_val2017/images
+mkdir val
+mv val2017 val/images
 
-mkdir instances_train2017
-mv train2017 instances_train2017/images
+mkdir train
+mv train2017 train/images
 
 # Go back to the repository root
 cd ..

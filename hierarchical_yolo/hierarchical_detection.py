@@ -391,9 +391,32 @@ class HierarchicalDetectionValidator(ultralytics.models.yolo.detect.DetectionVal
         hierarchical postprocessing engine, and optionally casts predictions 
         up to the allowed vocabulary tier.
         """
-        subset_ids = getattr(self.model, 'eval_subset_ids', self.eval_subset_ids)
-        active_hierarchy = getattr(self.model, 'hierarchy', self.hierarchy)
+        # 1. Safely extract dynamic overrides (standalone eval context)
+        if hasattr(self, 'model') and self.model is not None:
+            subset_ids = getattr(self.model, 'eval_subset_ids', self.eval_subset_ids)
+            active_hierarchy = getattr(self.model, 'hierarchy', self.hierarchy)
+        else:
+            # Training context: model is detached. Rely on organically constrained BCE logic.
+            subset_ids = self.eval_subset_ids
+            active_hierarchy = self.hierarchy
 
+        # 2. Defensive fallback: If hierarchy is somehow lost in DDP context, rebuild it
+        if active_hierarchy is None:
+            import os
+            import json
+            hierarchy_path = os.environ.get('HIERARCHY_PATH')
+            if hierarchy_path and os.path.exists(hierarchy_path):
+                with open(hierarchy_path, 'r') as f:
+                    raw_tree = json.load(f)
+                
+                # Reconstruct integer mapping from the active validator's YAML definition
+                yolo_names = getattr(self, 'data', {}).get('names', {})
+                if yolo_names:
+                    name_to_id = {v: k for k, v in yolo_names.items()}
+                    active_hierarchy = Hierarchy(raw_tree, name_to_id)
+                    self.hierarchy = active_hierarchy  # Cache it locally
+
+        # 3. If completely missing taxonomy context, fallback to vanilla YOLO
         if active_hierarchy is None:
             return super().postprocess(preds)
 
