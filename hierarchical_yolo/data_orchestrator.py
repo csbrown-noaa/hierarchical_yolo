@@ -1,18 +1,26 @@
 import os
 import shutil
 import argparse
+import json
 
 import pycocowriter.coco2yolo
+from hierarchical_loss.hierarchy_expander import (
+    StaticTaxonomyProvider, 
+    align_coco_dictionaries
+)
 from hierarchical_yolo.hierarchical_curriculum_builder import build_hierarchical_curriculum
 from hierarchical_yolo.flat_baseline_builder import build_flat_baselines
 from hierarchical_yolo import yolo_fs_utils
 
-def build_hierarchical_workspace(source_dir: str, workspace_dir: str, hierarchy_source: str = None) -> None:
+def build_hierarchical_workspace(
+    source_dir: str, 
+    workspace_dir: str
+) -> None:
     """
     Compiles a complete hierarchical training workspace from a directory of COCO JSONs.
     
     This acts as a generic orchestrator that takes a "clean" COCO staging directory 
-    (containing any number of JSON splits and a hierarchy map) and compiles the 
+    (containing any number of JSON splits and a hierarchy.json) and compiles the 
     various YOLO datasets required for hierarchical and baseline training/evaluation.
     """
     print("=" * 60)
@@ -26,40 +34,52 @@ def build_hierarchical_workspace(source_dir: str, workspace_dir: str, hierarchy_
     master_yolo_dir = os.path.join(workspace_dir, "master_yolo")
     tier_full_head_dir = os.path.join(workspace_dir, "tier_yolo_full_head")
     tier_flat_dir = os.path.join(workspace_dir, "tier_yolo_flat_specialists")
-    
-    # Locate hierarchy.json
-    if hierarchy_source is None:
-        hierarchy_source = os.path.join(source_dir, "hierarchy.json")
-        # Legacy fallback
-        if not os.path.exists(hierarchy_source):
-            legacy_source = os.path.join(source_dir, "hierarchy_data", "hierarchy.json")
-            if os.path.exists(legacy_source):
-                hierarchy_source = legacy_source
-
-    if not os.path.exists(hierarchy_source):
-        raise FileNotFoundError(f"Missing hierarchy.json at {hierarchy_source}. Ensure your staging orchestrator generated it or provide the path explicitly.")
-            
     hierarchy_dest = os.path.join(workspace_dir, "hierarchy.json")
 
-    # 2. Populate master_coco (The Clean Room)
-    print("\n--- Phase 1: Populating Master COCO Clean Room ---")
+    # 2. Phase 1: Master Taxonomic Alignment & Clean Room Population
+    print("\n--- Phase 1: Taxonomic Alignment & Populating Master COCO Clean Room ---")
     os.makedirs(master_coco_dir, exist_ok=True)
-            
-    shutil.copyfile(hierarchy_source, hierarchy_dest)
-    print(f"Copied hierarchy.json to workspace root.")
 
-    # Safely discover only valid COCO split files (ignores metadata/hierarchy JSONs)
+    # Safely discover only valid COCO split files (ignores metadata JSONs)
     split_files = pycocowriter.coco2yolo.discover_coco_files(source_dir)
     coco_files = split_files.get('train', []) + split_files.get('val', []) + split_files.get('test', [])
     
     if not coco_files:
         raise FileNotFoundError(f"No valid COCO JSON splits (train/val/test) found in {source_dir}. Ensure your staging orchestrator saved them here.")
 
+    # Load all target dictionaries into memory
+    print("Loading raw COCO JSON splits into memory...")
+    coco_dicts = []
     for file in coco_files:
+        with open(file, 'r') as f:
+            coco_dicts.append(json.load(f))
+
+    # Setup the Static Provider from the source directory's hierarchy.json
+    hierarchy_source = os.path.join(source_dir, "hierarchy.json")
+
+    if not os.path.exists(hierarchy_source):
+        raise FileNotFoundError(f"Missing hierarchy.json at {hierarchy_source}. Ensure your staging script generated it or provide a manually created one.")
+    
+    with open(hierarchy_source, 'r') as f:
+        raw_tree = json.load(f)
+    taxonomy_provider = StaticTaxonomyProvider(raw_tree)
+
+    # Run Universal Alignment across all dataset splits
+    aligned_dicts, master_tree = align_coco_dictionaries(coco_dicts, taxonomy_provider)
+
+    # Dynamically write the resulting Master Hierarchy to the workspace root
+    with open(hierarchy_dest, 'w') as f:
+        json.dump(master_tree, f, indent=4)
+    print(f"\nExported master taxonomy tree -> {hierarchy_dest}")
+
+    # Write Aligned Dicts safely to the Clean Room
+    for file, aligned_dict in zip(coco_files, aligned_dicts):
         basename = os.path.basename(file)
         dest_path = os.path.join(master_coco_dir, basename)
-        shutil.copyfile(file, dest_path)
-        print(f"Copied {basename} -> master_coco/")
+        
+        with open(dest_path, 'w') as f:
+            json.dump(aligned_dict, f)
+        print(f"Saved aligned split {basename} -> master_coco/")
 
     # 3. Master YOLO Conversion
     print("\n--- Phase 2: Master YOLO Conversion ---")
@@ -108,12 +128,6 @@ if __name__ == "__main__":
         default=os.path.expanduser('~/hierarchical_training_workspace'),
         help="Target directory for the generated YOLO datasets and configuration"
     )
-    parser.add_argument(
-        '--hierarchy_path',
-        type=str,
-        default=None,
-        help="Optional explicitly defined path to hierarchy.json. Defaults to hierarchy.json within source_dir."
-    )
     args = parser.parse_args()
     
-    build_hierarchical_workspace(args.source_dir, args.workspace_dir, args.hierarchy_path)
+    build_hierarchical_workspace(args.source_dir, args.workspace_dir)
