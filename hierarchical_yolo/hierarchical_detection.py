@@ -79,9 +79,13 @@ def _hierarchical_postprocess(preds, hierarchy, args, eval_subset_ids=None):
     )
     
     # 4. Truncate using Marginal Probabilities
-    trunc_paths, trunc_scores = batch_truncate_paths_marginals(
+    trunc_results = batch_truncate_paths_marginals(
         raw_paths, raw_path_scores, threshold=args.conf
     )
+    # Safely transpose the list of tuples into two separated lists 
+    # (Safe against 0-length batches, unlike zip(*...))
+    trunc_paths = [res[0] for res in trunc_results]
+    trunc_scores = [res[1] for res in trunc_results]
 
     # 5. Snap-to-Vocabulary ("Casting Up")
     if eval_subset_ids is not None:
