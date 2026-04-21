@@ -9,6 +9,10 @@ See the included jupyter notebooks for example usage.
 pip install git+https://github.com/csbrown-noaa/hierarchical_yolo.git
 ```
 
+# Slides
+
+[Presentation slides on this work](https://docs.google.com/presentation/d/1L0I-8miapJ_PC1Vj0XYP9OaVOk4G8uJjCON_hg2ISVI)
+
 # End-to-End Example: MSCOCO
 
 To see the hierarchical architecture in action, you can download the standard MSCOCO dataset, compile a hierarchical workspace, and train a curriculum model.
