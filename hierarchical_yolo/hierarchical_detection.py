@@ -27,8 +27,10 @@ from hierarchical_loss.path_utils import (
     batch_filter_empty_paths,
     batch_truncate_paths_marginals,
     optimal_hierarchical_path,
+    snap_to_vocabulary,
 )
 from hierarchical_yolo.yolo_utils import conditionals_to_marginals
+
 
 def load_hierarchy_from_env(yolo_names: dict) -> Hierarchy:
     """
@@ -44,11 +46,60 @@ def load_hierarchy_from_env(yolo_names: dict) -> Hierarchy:
     name_to_id = {v: k for k, v in yolo_names.items()}
     return Hierarchy(raw_tree, name_to_id)
 
+
+def pack_ultralytics_tensors(filtered_batch: list, device: torch.device) -> list[torch.Tensor]:
+    """
+    Translates filtered path outputs back into standard Ultralytics (N, 6) tensor arrays.
+    """
+    results_tensors = []
+    for boxes, paths, scores in filtered_batch:
+        boxes_t = boxes.T  # (N_filtered, 4)
+        
+        final_pred = torch.zeros((len(paths), 6), device=device)
+        if len(paths) > 0:
+            final_pred[:, :4] = boxes_t
+            # Conf: True Marginal score of the deepest surviving node
+            final_pred[:, 4] = torch.tensor([s[-1].item() for s in scores], device=device, dtype=torch.float)
+            # Cls: ID of the deepest surviving node
+            final_pred[:, 5] = torch.tensor([p[-1] for p in paths], device=device, dtype=torch.float)
+        
+        results_tensors.append(final_pred)
+        
+    return results_tensors
+
+
+def pack_ultralytics_dicts(filtered_batch: list, device: torch.device) -> list[dict]:
+    """
+    Converts the filtered results into the dictionary format expected by the 
+    Ultralytics v8.3+ validation engine metrics calculator.
+    """
+    repacked_results = []
+    for boxes, paths, scores in filtered_batch:
+        if len(paths) == 0:
+            repacked_results.append({
+                "bboxes": torch.zeros((0, 4), device=device),
+                "conf": torch.zeros((0,), device=device),
+                "cls": torch.zeros((0,), device=device)
+            })
+        else:
+            boxes_t = boxes.T
+            conf = torch.tensor([s[-1].item() for s in scores], device=device, dtype=torch.float)
+            cls = torch.tensor([p[-1] for p in paths], device=device, dtype=torch.float)
+            repacked_results.append({
+                "bboxes": boxes_t,
+                "conf": conf,
+                "cls": cls
+            })
+    return repacked_results
+
+
 def _hierarchical_postprocess(preds, hierarchy, args, eval_subset_ids=None):
     """
     Shared post-processing engine for both Validation and Prediction.
     Converts to marginals, runs Root-Anchored NMS, traverses the hierarchy,
     and cleanly snaps to the active vocabulary tier (if provided).
+    
+    Returns raw, unformatted python lists isolated from framework-specific shapes.
     """
     preds_tensor = preds[0] if isinstance(preds, (tuple, list)) else preds
 
@@ -96,55 +147,24 @@ def _hierarchical_postprocess(preds, hierarchy, args, eval_subset_ids=None):
 
     # 5. Snap-to-Vocabulary ("Casting Up")
     if eval_subset_ids is not None:
-        if isinstance(eval_subset_ids, torch.Tensor):
-            eval_subset_ids = eval_subset_ids.tolist()
-        eval_subset_set = set(eval_subset_ids)
+        trunc_results = snap_to_vocabulary(trunc_results, eval_subset_ids)
 
-        snapped_results = []
-        for p_list, s_list in trunc_results:
-            new_p_list = []
-            new_s_list = []
-            for path, score_path in zip(p_list, s_list):
-                valid_idx = -1
-                # Walk backward from the deepest node to find an allowed vocabulary hit
-                for i in range(len(path) - 1, -1, -1):
-                    if path[i] in eval_subset_set:
-                        valid_idx = i
-                        break
-                if valid_idx != -1:
-                    new_p_list.append(path[:valid_idx+1])
-                    new_s_list.append(score_path[:valid_idx+1])
-                else:
-                    new_p_list.append([]) # Completely invalid path
-                    new_s_list.append([])
-            snapped_results.append((new_p_list, new_s_list))
-        trunc_results = snapped_results
-    
-    # Extract paths and scores to feed to the empty path filter
+    # Separate paths and scores for the index filter
     trunc_paths = [res[0] for res in trunc_results]
     trunc_scores = [res[1] for res in trunc_results]
 
-    # Filter out paths that became completely empty
-    filtered_batch = batch_filter_empty_paths(
-        all_boxes, trunc_paths, trunc_scores
-    )
+    # 6. Empty Path Filtering (Box-Blind Index Resolution)
+    filtered_results = batch_filter_empty_paths(trunc_paths, return_indices=True)
 
-    # 6. Translate back to standard Ultralytics (N, 6) tensor arrays
-    results_tensors = []
-    for i, (boxes, paths, scores) in enumerate(filtered_batch):
-        boxes_t = boxes.T  # (N_filtered, 4)
-        
-        final_pred = torch.zeros((len(paths), 6), device=preds_tensor.device)
-        if len(paths) > 0:
-            final_pred[:, :4] = boxes_t
-            # Conf: True Marginal score of the deepest surviving node
-            final_pred[:, 4] = torch.tensor([s[-1].item() for s in scores], device=preds_tensor.device, dtype=torch.float)
-            # Cls: ID of the deepest surviving node
-            final_pred[:, 5] = torch.tensor([p[-1] for p in paths], device=preds_tensor.device, dtype=torch.float)
-        
-        results_tensors.append(final_pred)
-        
-    return results_tensors
+    # 7. Apply the Math-Engine's indices back onto the Spatial Framework's boxes
+    filtered_batch = []
+    for i, (f_paths, keep_idx) in enumerate(filtered_results):
+        f_boxes = all_boxes[i][:, keep_idx]
+        f_scores = [trunc_scores[i][k] for k in keep_idx]
+        filtered_batch.append((f_boxes, f_paths, f_scores))
+
+    return filtered_batch
+
 
 class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
     """Criterion class for computing training losses for YOLOv8 object detection."""
@@ -180,34 +200,11 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
 
         # Pboxes
         pred_bboxes = self.bbox_decode(anchor_points, pred_distri)  # xyxy, (b, h*w, 4)
-        # dfl_conf = pred_distri.view(batch_size, -1, 4, self.reg_max).detach().softmax(-1)
-        # dfl_conf = (dfl_conf.amax(-1).mean(-1) + dfl_conf.amax(-1).amin(-1)) / 2
-
-        # assign on marginals vs
-        '''
-        logsigmoid_pred_scores = torch.nn.LogSigmoid()(pred_scores)
-        hierarchical_pred_scores = accumulate_hierarchy(
-            logsigmoid_pred_scores, 
-            self.hierarchy.index_tensor, 
-            reduce_op=torch.sum,
-            identity_value=0.
-        )
-        _, target_bboxes, target_scores, fg_mask, _ = self.assigner(
-            #torch.exp(hierarchical_pred_scores)
-            root_pred_scores,
-            (pred_bboxes.detach() * stride_tensor).type(gt_bboxes.dtype),
-            anchor_points * stride_tensor,
-            gt_labels,
-            gt_bboxes,
-            mask_gt,
-        )
-        '''
   
         # assign on roots
         root_pred_scores = pred_scores[..., self.hierarchy.node_to_root].detach().sigmoid()
 
         _, target_bboxes, target_scores, fg_mask, _ = self.assigner(
-            #torch.exp(hierarchical_pred_scores)
             root_pred_scores,
             (pred_bboxes.detach() * stride_tensor).type(gt_bboxes.dtype),
             anchor_points * stride_tensor,
@@ -229,30 +226,6 @@ class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
             self.hierarchy.root_mask
         )
         loss[1] = hierarchical_class_loss.sum() / target_scores_sum
-         
-
-        # 2. Compute Structural Loss (Normalized by Hierarchy Depth/Width)
-        # Returns: (B, N_anchors)
-        '''
-        loss_per_anchor = hierarchical_conditional_bce(
-            pred_scores,
-            target_indices,
-            self.hierarchy.ancestor_mask,
-            self.hierarchy.ancestor_sibling_mask
-        )
-        loss[1] = (target_weights * loss_per_anchor).sum() / target_scores_sum
-        '''
-        '''
-        # 3. Apply Target Weights (Quality Normalization)
-        # We value high-IoU matches more than low-IoU matches
-        weighted_loss = loss_per_anchor * target_weights
-
-        # 4. Final Normalization
-        # Divide by the sum of weights (the "effective" batch size)
-        # Use max(..., 1) to prevent NaN on empty batches
-        loss_norm = target_weights.sum().clamp(min=1.0)
-        loss[1] = weighted_loss.sum() / loss_norm
-        '''
 
         # Bbox loss
         if fg_mask.sum():
@@ -277,25 +250,9 @@ class HierarchicalDetectionTrainer(ultralytics.models.yolo.detect.DetectionTrain
     loss and validation logic in a Multi-GPU (DDP) safe manner.
     """
     
-    # We completely removed the __init__ and the _hierarchy class variable!
-    
     def get_model(self, cfg=None, weights=None, verbose=True):
         """
         Return a YOLO hierarchical detection model.
-
-        Parameters
-        ----------
-        cfg : str, optional
-            Path to model configuration file. By default None.
-        weights : str, optional
-            Path to model weights. By default None.
-        verbose : bool, optional
-            Whether to display model information. By default True.
-
-        Returns
-        -------
-        HierarchicalDetectionModel
-            YOLO hierarchical detection model.
         """
         yolo_names = self.data['names']
         hierarchy_obj = load_hierarchy_from_env(yolo_names)
@@ -363,43 +320,12 @@ class HierarchicalDetectionValidator(ultralytics.models.yolo.detect.DetectionVal
     Suppression (NMS). This allows for accurate mAP calculation and optional 
     apples-to-apples comparisons with flat baseline models by restricting evaluation 
     to a specific subset of the taxonomy.
-
-    Parameters
-    ----------
-    *args : tuple
-        Positional arguments passed to the base `DetectionValidator`.
-    eval_subset_ids : list[int] | set[int] | torch.Tensor | None, optional
-        Specific category IDs to evaluate against. If provided, probabilities for 
-        classes outside this subset are zeroed out before NMS.
-    **kwargs : dict
-        Keyword arguments passed to the base `DetectionValidator`.
     """
     
     def __init__(self, *args, eval_subset_ids=None, hierarchy=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.eval_subset_ids = eval_subset_ids
         self.hierarchy = hierarchy
-
-    def _repack(self, results_tensors):
-        """
-        Converts the (N, 6) tensor results from the hierarchical postprocessor
-        into the dictionary format expected by the Ultralytics v8.3+ validation engine.
-        """
-        repacked_results = []
-        for pred in results_tensors:
-            if len(pred) == 0:
-                repacked_results.append({
-                    "bboxes": torch.zeros((0, 4), device=pred.device),
-                    "conf": torch.zeros((0,), device=pred.device),
-                    "cls": torch.zeros((0,), device=pred.device)
-                })
-            else:
-                repacked_results.append({
-                    "bboxes": pred[:, :4],
-                    "conf": pred[:, 4],
-                    "cls": pred[:, 5]
-                })
-        return repacked_results
 
     def postprocess(self, preds):
         """
@@ -422,14 +348,15 @@ class HierarchicalDetectionValidator(ultralytics.models.yolo.detect.DetectionVal
             active_hierarchy = load_hierarchy_from_env(yolo_names)
             self.hierarchy = active_hierarchy  # Cache it locally
 
-        results_tensors = _hierarchical_postprocess(
+        filtered_batch = _hierarchical_postprocess(
             preds, 
             active_hierarchy, 
             self.args, 
             eval_subset_ids=subset_ids
         )
         
-        return self._repack(results_tensors)
+        preds_tensor = preds[0] if isinstance(preds, (tuple, list)) else preds
+        return pack_ultralytics_dicts(filtered_batch, preds_tensor.device)
 
 
 class HierarchicalDetectionPredictor(ultralytics.models.yolo.detect.DetectionPredictor):
@@ -445,11 +372,17 @@ class HierarchicalDetectionPredictor(ultralytics.models.yolo.detect.DetectionPre
         and packages the results back into Ultralytics Results objects.
         """
         hierarchy = getattr(self.model.model, 'hierarchy', None)
+        if hierarchy is None:
+            return super().postprocess(preds, img, orig_imgs)
 
         # 1. Run the unified processing engine (Predictor natively uses the full taxonomy)
-        results_tensors = _hierarchical_postprocess(preds, hierarchy, self.args)
+        filtered_batch = _hierarchical_postprocess(preds, hierarchy, self.args)
 
-        # 2. Box Scaling & Translation back to Ultralytics `Results` UI Format
+        preds_tensor = preds[0] if isinstance(preds, (tuple, list)) else preds
+        # 2. Pack to Ultralytics Tensors
+        results_tensors = pack_ultralytics_tensors(filtered_batch, preds_tensor.device)
+
+        # 3. Box Scaling & Translation back to Ultralytics `Results` UI Format
         results = []
         for i, final_pred in enumerate(results_tensors):
             orig_img = orig_imgs[i] if isinstance(orig_imgs, list) else orig_imgs
