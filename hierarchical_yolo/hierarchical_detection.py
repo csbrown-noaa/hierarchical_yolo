@@ -93,10 +93,6 @@ def _hierarchical_postprocess(preds, hierarchy, args, eval_subset_ids=None):
     trunc_results = batch_truncate_paths_marginals(
         raw_paths, raw_path_scores, threshold=args.conf
     )
-    # Safely transpose the list of tuples into two separated lists 
-    # (Safe against 0-length batches, unlike zip(*...))
-    trunc_paths = [res[0] for res in trunc_results]
-    trunc_scores = [res[1] for res in trunc_results]
 
     # 5. Snap-to-Vocabulary ("Casting Up")
     if eval_subset_ids is not None:
@@ -104,9 +100,8 @@ def _hierarchical_postprocess(preds, hierarchy, args, eval_subset_ids=None):
             eval_subset_ids = eval_subset_ids.tolist()
         eval_subset_set = set(eval_subset_ids)
 
-        snapped_paths = []
-        snapped_scores = []
-        for p_list, s_list in zip(trunc_paths, trunc_scores):
+        snapped_results = []
+        for p_list, s_list in trunc_results:
             new_p_list = []
             new_s_list = []
             for path, score_path in zip(p_list, s_list):
@@ -122,10 +117,13 @@ def _hierarchical_postprocess(preds, hierarchy, args, eval_subset_ids=None):
                 else:
                     new_p_list.append([]) # Completely invalid path
                     new_s_list.append([])
-            snapped_paths.append(new_p_list)
-            snapped_scores.append(new_s_list)
-        trunc_paths, trunc_scores = snapped_paths, snapped_scores
+            snapped_results.append((new_p_list, new_s_list))
+        trunc_results = snapped_results
     
+    # Extract paths and scores to feed to the empty path filter
+    trunc_paths = [res[0] for res in trunc_results]
+    trunc_scores = [res[1] for res in trunc_results]
+
     # Filter out paths that became completely empty
     filtered_batch = batch_filter_empty_paths(
         all_boxes, trunc_paths, trunc_scores
