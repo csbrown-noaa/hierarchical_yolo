@@ -1,37 +1,33 @@
-from copy import copy
-import ultralytics.utils.loss
-import ultralytics.models
-import ultralytics
 import json
+from copy import copy
+
 import torch
+import ultralytics
+import ultralytics.models
+import ultralytics.utils.loss
+import ultralytics.utils.ops as ops
+from ultralytics.engine.results import Results
 from ultralytics.utils import LOGGER
 
-import ultralytics.utils.ops as ops
 try:
     from ultralytics.utils.ops import non_max_suppression
 except ImportError:
     from ultralytics.utils.nms import non_max_suppression
 
-from ultralytics.engine.results import Results
+from hierarchical_loss.hierarchical_loss import (
+    hierarchical_bce,
+    hierarchical_conditional_bce,
+    hierarchical_conditional_bce_soft_root,
+    hierarchical_probabilistic_bce,
+)
 from hierarchical_loss.hierarchy import Hierarchy
-from hierarchical_loss.hierarchy_tensor_utils import (
-    accumulate_hierarchy
-)
-from hierarchical_loss.hierarchical_loss import hierarchical_bce, hierarchical_conditional_bce, hierarchical_conditional_bce_soft_root, hierarchical_probabilistic_bce
-from hierarchical_yolo.yolo_utils import conditionals_to_marginals
-
-import ultralytics.utils.ops as ops
-try:
-    from ultralytics.utils.ops import non_max_suppression
-except ImportError:
-    from ultralytics.utils.nms import non_max_suppression
-
-from ultralytics.engine.results import Results
+from hierarchical_loss.hierarchy_tensor_utils import accumulate_hierarchy
 from hierarchical_loss.path_utils import (
-    optimal_hierarchical_path,
+    batch_filter_empty_paths,
     batch_truncate_paths_marginals,
-    batch_filter_empty_paths
+    optimal_hierarchical_path,
 )
+from hierarchical_yolo.yolo_utils import conditionals_to_marginals
 
 def _hierarchical_postprocess(preds, hierarchy, args, eval_subset_ids=None):
     """
