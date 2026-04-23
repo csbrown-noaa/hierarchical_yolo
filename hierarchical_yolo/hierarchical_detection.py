@@ -389,6 +389,27 @@ class HierarchicalDetectionValidator(ultralytics.models.yolo.detect.DetectionVal
         self.eval_subset_ids = eval_subset_ids
         self.hierarchy = hierarchy
 
+    def _repack(self, results_tensors):
+        """
+        Converts the (N, 6) tensor results from the hierarchical postprocessor
+        into the dictionary format expected by the Ultralytics v8.3+ validation engine.
+        """
+        repacked_results = []
+        for pred in results_tensors:
+            if len(pred) == 0:
+                repacked_results.append({
+                    "bboxes": torch.zeros((0, 4), device=pred.device),
+                    "conf": torch.zeros((0,), device=pred.device),
+                    "cls": torch.zeros((0,), device=pred.device)
+                })
+            else:
+                repacked_results.append({
+                    "bboxes": pred[:, :4],
+                    "conf": pred[:, 4],
+                    "cls": pred[:, 5]
+                })
+        return reppacked_results
+
     def postprocess(self, preds):
         """
         Intercepts the model predictions, routes them through the shared 
@@ -420,16 +441,14 @@ class HierarchicalDetectionValidator(ultralytics.models.yolo.detect.DetectionVal
                     active_hierarchy = Hierarchy(raw_tree, name_to_id)
                     self.hierarchy = active_hierarchy  # Cache it locally
 
-        # 3. If completely missing taxonomy context, fallback to vanilla YOLO
-        if active_hierarchy is None:
-            return super().postprocess(preds)
-
-        return _hierarchical_postprocess(
+        results_tensors = _hierarchical_postprocess(
             preds, 
             active_hierarchy, 
             self.args, 
             eval_subset_ids=subset_ids
         )
+        
+        return self._repack(results_tensors)
 
 
 class HierarchicalDetectionPredictor(ultralytics.models.yolo.detect.DetectionPredictor):
