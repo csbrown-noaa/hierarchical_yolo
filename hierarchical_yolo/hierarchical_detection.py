@@ -1,4 +1,5 @@
 import json
+import os
 from copy import copy
 
 import torch
@@ -28,6 +29,20 @@ from hierarchical_loss.path_utils import (
     optimal_hierarchical_path,
 )
 from hierarchical_yolo.yolo_utils import conditionals_to_marginals
+
+def load_hierarchy_from_env(yolo_names: dict) -> Hierarchy:
+    """
+    Safely loads and constructs the Hierarchy object from the environment.
+    """
+    # Strict indexing allows Python to naturally throw a clean KeyError 
+    # if the environment variable is missing, failing fast and obviously.
+    hierarchy_path = os.environ['HIERARCHY_PATH']
+
+    with open(hierarchy_path, 'r') as f:
+        raw_tree = json.load(f)
+        
+    name_to_id = {v: k for k, v in yolo_names.items()}
+    return Hierarchy(raw_tree, name_to_id)
 
 def _hierarchical_postprocess(preds, hierarchy, args, eval_subset_ids=None):
     """
@@ -284,28 +299,10 @@ class HierarchicalDetectionTrainer(ultralytics.models.yolo.detect.DetectionTrain
         HierarchicalDetectionModel
             YOLO hierarchical detection model.
         """
-        import os
-        # 1. Safely extract the path passed during DDP distribution via environment variable
-        hierarchy_path = os.environ.get('HIERARCHY_PATH')
-        hierarchy_obj = None
-        
-        if hierarchy_path:
-            # 2. Load the JSON (happens independently and safely on each GPU)
-            with open(hierarchy_path, 'r') as f:
-                raw_hierarchy = json.load(f)
-                
-            # 3. Grab the YOLO class ID mapping directly from the Trainer's parsed YAML.
-            # self.data['names'] looks like {0: 'fish', 1: 'shark'}
-            # We invert it to {'fish': 0, 'shark': 1} exactly like your old code did!
-            yolo_names = self.data['names']
-            name_to_id = {v: k for k, v in yolo_names.items()}
-            
-            # 4. Initialize the Hierarchy object locally
-            hierarchy_obj = Hierarchy(raw_hierarchy, name_to_id)
-        else:
-            print("WARNING: 'hierarchy_path' not provided in training arguments! Hierarchical loss may fail.")
+        yolo_names = self.data['names']
+        hierarchy_obj = load_hierarchy_from_env(yolo_names)
 
-        # 5. Pass the newly built hierarchy object to the model
+        # Pass the newly built hierarchy object to the model
         model = HierarchicalDetectionModel(
             cfg, 
             nc=self.data["nc"], 
@@ -404,7 +401,7 @@ class HierarchicalDetectionValidator(ultralytics.models.yolo.detect.DetectionVal
                     "conf": pred[:, 4],
                     "cls": pred[:, 5]
                 })
-        return reppacked_results
+        return repacked_results
 
     def postprocess(self, preds):
         """
@@ -423,19 +420,9 @@ class HierarchicalDetectionValidator(ultralytics.models.yolo.detect.DetectionVal
 
         # 2. Defensive fallback: If hierarchy is somehow lost in DDP context, rebuild it
         if active_hierarchy is None:
-            import os
-            import json
-            hierarchy_path = os.environ.get('HIERARCHY_PATH')
-            if hierarchy_path and os.path.exists(hierarchy_path):
-                with open(hierarchy_path, 'r') as f:
-                    raw_tree = json.load(f)
-                
-                # Reconstruct integer mapping from the active validator's YAML definition
-                yolo_names = getattr(self, 'data', {}).get('names', {})
-                if yolo_names:
-                    name_to_id = {v: k for k, v in yolo_names.items()}
-                    active_hierarchy = Hierarchy(raw_tree, name_to_id)
-                    self.hierarchy = active_hierarchy  # Cache it locally
+            yolo_names = getattr(self, 'data', {}).get('names', {})
+            active_hierarchy = load_hierarchy_from_env(yolo_names)
+            self.hierarchy = active_hierarchy  # Cache it locally
 
         results_tensors = _hierarchical_postprocess(
             preds, 
@@ -460,8 +447,6 @@ class HierarchicalDetectionPredictor(ultralytics.models.yolo.detect.DetectionPre
         and packages the results back into Ultralytics Results objects.
         """
         hierarchy = getattr(self.model.model, 'hierarchy', None)
-        if hierarchy is None:
-            return super().postprocess(preds, img, orig_imgs)
 
         # 1. Run the unified processing engine (Predictor natively uses the full taxonomy)
         results_tensors = _hierarchical_postprocess(preds, hierarchy, self.args)
