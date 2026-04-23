@@ -4,7 +4,7 @@ build-backend = "flit_core.buildapi"
 
 [project]
 name = "hierarchical_yolo"
-version = "0.2.27"
+version = "0.2.28"
 description = "yolo, but with hierarchical output"
 authors = [
     { name = "CScott Brown" },
