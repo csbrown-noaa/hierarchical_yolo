@@ -38,7 +38,8 @@ def train_curriculum(
     imgsz: int = 640,
     batch: int = 16,
     device: str = "",
-    val: bool = False
+    val: bool = False,
+    workers: int = 0
 ) -> None:
     """
     Orchestrates the staged curriculum training of a hierarchical YOLO model.
@@ -70,6 +71,8 @@ def train_curriculum(
         Device to run training on (e.g., '', '0', '0,1,2,3'). Default is empty string (auto).
     val : bool, optional
         Whether to run validation during training (default is False, as hierarchical validation is WIP).
+    workers : int, optional
+        Number of worker threads for data loading (per RANK if Multi-GPU training)
     """
     hierarchy_json_path = os.path.join(workspace_dir, 'hierarchy.json')
     
@@ -109,6 +112,7 @@ def train_curriculum(
             "batch": batch,
             "device": device if device else None,
             "val": val,
+            "workers": workers if workers else 8,
         }
         
         # 1. Initialize our custom DDP-ready hierarchical trainer
@@ -196,6 +200,12 @@ if __name__ == "__main__":
         action='store_true',
         help="Enable validation during training (default is False, omit flag to disable)."
     )
+    parser.add_argument(
+        '--workers', 
+        type=int,
+        default=8,
+        help="Number of worker threads for data loading (per RANK if Multi-GPU training). "
+    )
     
     args = parser.parse_args()
     
@@ -209,5 +219,6 @@ if __name__ == "__main__":
         imgsz=args.imgsz,
         batch=args.batch,
         device=args.device,
-        val=args.val
+        val=args.val,
+        workers=args.workers
     )
