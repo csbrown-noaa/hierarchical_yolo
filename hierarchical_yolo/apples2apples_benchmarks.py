@@ -13,7 +13,6 @@ except ImportError:
 
 from hierarchical_yolo.hierarchical_detection import HierarchicalYOLO, HierarchicalDetectionValidator
 from hierarchical_yolo.yolo_utils import get_yolo_class_names
-from hierarchical_loss.hierarchy_tensor_utils import conditional_to_marginal
 from hierarchical_loss.hierarchy import Hierarchy
 
 # ==========================================
@@ -84,8 +83,8 @@ class HierarchicalObjectnessValidator(DetectionValidator):
     """
     A custom validator for Hierarchical YOLO models that evaluates pure objectness.
     
-    Converts conditional predictions to marginals and isolates only the marginal 
-    probability of the Root node(s), treating them as Class 0 for evaluation.
+    Isolates the raw conditional probability of the Root node(s), treating them 
+    as Class 0 for evaluation.
     """
     def __init__(self, dataloader=None, save_dir=None, pbar=None, args=None, _callbacks=None):
         super().__init__(dataloader, save_dir, pbar, args, _callbacks)
@@ -111,13 +110,12 @@ class HierarchicalObjectnessValidator(DetectionValidator):
         if hierarchy is None:
             raise ValueError("Hierarchy object not found on model.")
             
-        cls_probs = preds_tensor[:, 4:, :].transpose(1, 2)
-        marginal_probs = conditional_to_marginal(cls_probs, hierarchy.index_tensor)
+        cls_probs = preds_tensor[:, 4:, :]  # [B, C, Detections]
+        root_indices = hierarchy.roots.to(cls_probs.device)
         
-        marginal_probs_t = marginal_probs.transpose(1, 2)
-        root_indices = hierarchy.roots.to(marginal_probs_t.device)
-        
-        root_scores, _ = marginal_probs_t[:, root_indices, :].max(dim=1, keepdim=True)
+        # Root conditional probabilities ARE their marginal probabilities 
+        # (they have no ancestors to multiply with)
+        root_scores, _ = cls_probs[:, root_indices, :].max(dim=1, keepdim=True)
         
         boxes = preds_tensor[:, :4, :]
         collapsed_preds = torch.cat([boxes, root_scores], dim=1)
