@@ -6,26 +6,9 @@ import torch
 from ultralytics import YOLO
 from ultralytics.models.yolo.detect import DetectionValidator
 
-from hierarchical_yolo.hierarchical_detection import HierarchicalYOLO, HierarchicalDetectionValidator
+from hierarchical_yolo.hierarchical_detection import HierarchicalYOLO, HierarchicalDetectionValidator, load_hierarchy_from_env
 from hierarchical_yolo.yolo_utils import get_yolo_class_names
 from hierarchical_loss.hierarchy import Hierarchy
-
-# ==========================================
-# Helpers
-# ==========================================
-
-def build_hierarchy(hierarchy_json: str, master_yaml: str) -> Hierarchy:
-    """
-    Constructs the Hierarchy object in memory from the dataset configurations.
-    """
-    with open(hierarchy_json, 'r') as f:
-        raw_tree = json.load(f)
-    
-    with open(master_yaml, 'r') as f:
-        master_names = get_yolo_class_names(f)
-        
-    name_to_id = {v: k for k, v in master_names.items()}
-    return Hierarchy(raw_tree, name_to_id)
 
 # ==========================================
 # Custom Validators for Objectness (Test A)
@@ -79,6 +62,7 @@ class HierarchicalObjectnessValidator(DetectionValidator):
         super().__init__(*args, **kwargs)
         self.nc = 1
         self.names = {0: 'object'}
+        self.hierarchy = None  # Lazily loaded to ensure DDP pickling safety
 
     def init_metrics(self, model):
         super().init_metrics(model)
@@ -95,12 +79,18 @@ class HierarchicalObjectnessValidator(DetectionValidator):
     def postprocess(self, preds):
         preds_tensor = preds[0]
         
-        hierarchy = getattr(self.model, 'hierarchy', None)
-        if hierarchy is None:
-            raise ValueError("Hierarchy object not found on model.")
+        # Lazy load the hierarchy from env to avoid pickling/model-detachment errors
+        if self.hierarchy is None:
+            active_hierarchy = getattr(self.model, 'hierarchy', None) if hasattr(self, 'model') else None
+            
+            if active_hierarchy is None:
+                yolo_names = getattr(self, 'data', {}).get('names', {})
+                active_hierarchy = load_hierarchy_from_env(yolo_names)
+                    
+            self.hierarchy = active_hierarchy  # Cache it
             
         cls_probs = preds_tensor[:, 4:, :]  # [B, C, Detections]
-        root_indices = hierarchy.roots.to(cls_probs.device)
+        root_indices = self.hierarchy.roots.to(cls_probs.device)
         
         # Root conditional probabilities ARE their marginal probabilities 
         # (they have no ancestors to multiply with)
@@ -127,6 +117,7 @@ class HierarchicalObjectnessYOLO(HierarchicalYOLO):
     @property
     def task_map(self):
         base_map = super().task_map
+        # Restored to a simple, un-nested assignment for DDP pickling safety
         base_map["detect"]["validator"] = HierarchicalObjectnessValidator
         return base_map
 
@@ -161,9 +152,26 @@ def run_objectness(
     elif model_type == 'hierarchical':
         if not hierarchy_json:
             raise ValueError("hierarchy_json must be provided for hierarchical evaluation.")
-        hierarchy_obj = build_hierarchy(hierarchy_json, data_yaml)
+        
+        # Inject hierarchy path into the environment for DDP-safe lazy loading
+        os.environ['HIERARCHY_PATH'] = hierarchy_json
+        
+        # We still build this here to attach it to the YOLO object natively,
+        # but the DDP-safe Validator will construct its own copy if detached.
+        with open(data_yaml, 'r') as f:
+            yolo_names = get_yolo_class_names(f)
+        hierarchy_obj = load_hierarchy_from_env(yolo_names)
         model = HierarchicalObjectnessYOLO(weights, hierarchy=hierarchy_obj)
-        res = model.val(data=data_yaml, split=split, imgsz=imgsz, batch=batch, device=run_device, plots=False)
+        
+        # By setting the env var, we don't need to pass hierarchy_json into model.val()
+        res = model.val(
+            data=data_yaml, 
+            split=split, 
+            imgsz=imgsz, 
+            batch=batch, 
+            device=run_device, 
+            plots=False
+        )
     
     else:
         raise ValueError("model_type must be either 'flat' or 'hierarchical'")
@@ -193,7 +201,12 @@ def run_specificity(
     print("🚀 RUNNING SPECIFICITY EVALUATION (HIERARCHICAL MASKED)")
     print("="*50)
 
-    hierarchy_obj = build_hierarchy(hierarchy_json, hierarchical_eval_yaml)
+    os.environ['HIERARCHY_PATH'] = hierarchy_json
+    
+    with open(hierarchical_eval_yaml, 'r') as f:
+        yolo_names = get_yolo_class_names(f)
+    hierarchy_obj = load_hierarchy_from_env(yolo_names)
+    
     run_device = None if not device else device
 
     # 1. Map Flat IDs to Master IDs
