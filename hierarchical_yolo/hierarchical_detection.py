@@ -348,6 +348,9 @@ class HierarchicalDetectionValidator(ultralytics.models.yolo.detect.DetectionVal
             active_hierarchy = load_hierarchy_from_env(yolo_names)
             self.hierarchy = active_hierarchy  # Cache it locally
 
+        preds_tensor = preds[0] if isinstance(preds, (tuple, list)) else preds
+        self.hierarchy = active_hierarchy.to(preds_tensor.device)
+
         filtered_batch = _hierarchical_postprocess(
             preds, 
             active_hierarchy, 
@@ -355,7 +358,6 @@ class HierarchicalDetectionValidator(ultralytics.models.yolo.detect.DetectionVal
             eval_subset_ids=subset_ids
         )
         
-        preds_tensor = preds[0] if isinstance(preds, (tuple, list)) else preds
         return pack_ultralytics_dicts(filtered_batch, preds_tensor.device)
 
 
