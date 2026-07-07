@@ -87,10 +87,12 @@ class HierarchicalObjectnessValidator(DetectionValidator):
                 yolo_names = getattr(self, 'data', {}).get('names', {})
                 active_hierarchy = load_hierarchy_from_env(yolo_names)
                     
-            self.hierarchy = active_hierarchy  # Cache it
+            self.hierarchy = active_hierarchy.to(preds_tensor.device)  # Cache it on device
+        elif self.hierarchy.roots.device != preds_tensor.device:
+            self.hierarchy = self.hierarchy.to(preds_tensor.device)
             
         cls_probs = preds_tensor[:, 4:, :]  # [B, C, Detections]
-        root_indices = self.hierarchy.roots.to(cls_probs.device)
+        root_indices = self.hierarchy.roots # Already on device
         
         # Root conditional probabilities ARE their marginal probabilities 
         # (they have no ancestors to multiply with)
@@ -156,22 +158,12 @@ def run_objectness(
         # Inject hierarchy path into the environment for DDP-safe lazy loading
         os.environ['HIERARCHY_PATH'] = hierarchy_json
         
-        # We still build this here to attach it to the YOLO object natively,
-        # but the DDP-safe Validator will construct its own copy if detached.
         with open(data_yaml, 'r') as f:
             yolo_names = get_yolo_class_names(f)
         hierarchy_obj = load_hierarchy_from_env(yolo_names)
         model = HierarchicalObjectnessYOLO(weights, hierarchy=hierarchy_obj)
         
-        # By setting the env var, we don't need to pass hierarchy_json into model.val()
-        res = model.val(
-            data=data_yaml, 
-            split=split, 
-            imgsz=imgsz, 
-            batch=batch, 
-            device=run_device, 
-            plots=False
-        )
+        res = model.val(data=data_yaml, split=split, imgsz=imgsz, batch=batch, device=run_device, plots=False)
     
     else:
         raise ValueError("model_type must be either 'flat' or 'hierarchical'")
