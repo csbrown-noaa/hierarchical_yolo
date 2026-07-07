@@ -6,11 +6,6 @@ import torch
 from ultralytics import YOLO
 from ultralytics.models.yolo.detect import DetectionValidator
 
-try:
-    from ultralytics.utils.ops import non_max_suppression
-except ImportError:
-    from ultralytics.utils.nms import non_max_suppression
-
 from hierarchical_yolo.hierarchical_detection import HierarchicalYOLO, HierarchicalDetectionValidator
 from hierarchical_yolo.yolo_utils import get_yolo_class_names
 from hierarchical_loss.hierarchy import Hierarchy
@@ -62,7 +57,7 @@ class FlatObjectnessValidator(DetectionValidator):
         return batch
 
     def postprocess(self, preds):
-        preds_tensor = preds[0] if isinstance(preds, (list, tuple)) else preds
+        preds_tensor = preds[0]
         
         boxes = preds_tensor[:, :4, :]
         # p(Object) ≈ max(p(class_i)) for mutually exclusive flat models
@@ -70,14 +65,8 @@ class FlatObjectnessValidator(DetectionValidator):
         
         collapsed_preds = torch.cat([boxes, scores], dim=1)
         
-        return non_max_suppression(
-            collapsed_preds,
-            conf_thres=self.args.conf,
-            iou_thres=self.args.iou,
-            multi_label=False,
-            agnostic=self.args.agnostic_nms,
-            max_det=self.args.max_det
-        )
+        # Delegate the actual NMS and output formatting back to the base validator
+        return super().postprocess((collapsed_preds, *preds[1:]))
 
 class HierarchicalObjectnessValidator(DetectionValidator):
     """
@@ -104,7 +93,7 @@ class HierarchicalObjectnessValidator(DetectionValidator):
         return batch
 
     def postprocess(self, preds):
-        preds_tensor = preds[0] if isinstance(preds, (list, tuple)) else preds
+        preds_tensor = preds[0]
         
         hierarchy = getattr(self.model, 'hierarchy', None)
         if hierarchy is None:
@@ -120,14 +109,8 @@ class HierarchicalObjectnessValidator(DetectionValidator):
         boxes = preds_tensor[:, :4, :]
         collapsed_preds = torch.cat([boxes, root_scores], dim=1)
         
-        return non_max_suppression(
-            collapsed_preds,
-            conf_thres=self.args.conf,
-            iou_thres=self.args.iou,
-            multi_label=False,
-            agnostic=self.args.agnostic_nms,
-            max_det=self.args.max_det
-        )
+        # Delegate the actual NMS and output formatting back to the base validator
+        return super().postprocess((collapsed_preds, *preds[1:]))
 
 # ==========================================
 # YOLO Wrappers to Inject Validators
