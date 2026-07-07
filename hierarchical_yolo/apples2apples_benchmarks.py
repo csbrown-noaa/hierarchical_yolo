@@ -44,8 +44,8 @@ class FlatObjectnessValidator(DetectionValidator):
     labels to Class 0, and collapsing all predicted class probabilities into a 
     single max-probability score.
     """
-    def __init__(self, dataloader=None, save_dir=None, pbar=None, args=None, _callbacks=None):
-        super().__init__(dataloader, save_dir, pbar, args, _callbacks)
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self.nc = 1
         self.names = {0: 'object'}
 
@@ -86,8 +86,8 @@ class HierarchicalObjectnessValidator(DetectionValidator):
     Isolates the raw conditional probability of the Root node(s), treating them 
     as Class 0 for evaluation.
     """
-    def __init__(self, dataloader=None, save_dir=None, pbar=None, args=None, _callbacks=None):
-        super().__init__(dataloader, save_dir, pbar, args, _callbacks)
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self.nc = 1
         self.names = {0: 'object'}
 
