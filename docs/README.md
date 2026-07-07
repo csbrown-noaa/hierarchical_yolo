@@ -103,13 +103,14 @@ python -m hierarchical_yolo.predict \
 
 ```
 
+
 ### 5. Apples-to-Apples Evaluation
 
 Standard metrics (like mAP) heavily privilege models trained explicitly for a single evaluation tier. A hierarchical model evaluates the entire taxonomic tree simultaneously, making direct comparison against a "flat" baseline inherently difficult.
 
 To reduce epistemic error and fairly compare models, we provide an "Apples-to-Apples" benchmark suite. This toolbox dynamically masks predictions and collapses ground truths in PyTorch memory, allowing you to mathematically coerce models into matching hypothesis spaces.
 
-*Note: To evaluate flat baseline models natively on their own taxonomy, simply use the standard ultralytics CLI (e.g., `yolo val model=runs/flat_root/weights/best.pt data=coco_workspace/tier_flat_specialists/000/val.yaml`). The scripts below are used to coerce models that do not natively match the target evaluation space.*
+*Note: To evaluate flat baseline models natively on their own taxonomy, simply use the standard ultralytics CLI (e.g., `yolo val model=runs/flat_root/weights/best.pt data=coco_workspace/tier_flat_specialists/000/train.yaml split=test`). The scripts below are used to coerce models that do not natively match the target evaluation space.*
 
 #### Test A: The Objectness Benchmark (Root-Level Detection)
 
@@ -121,7 +122,11 @@ Evaluate the deep Flat Model (coerced to objectness):
 python -m hierarchical_yolo.apples2apples_benchmarks objectness \
     --weights ./runs/flat_original/weights/best.pt \
     --model_type flat \
-    --data_yaml ./coco_workspace/master_yolo/val.yaml
+    --data_yaml ./coco_workspace/master_yolo/train.yaml \
+    --split test
+
+
+
 
 ```
 
@@ -131,8 +136,12 @@ Evaluate the Hierarchical Model (coerced to root marginal objectness):
 python -m hierarchical_yolo.apples2apples_benchmarks objectness \
     --weights ./runs/coco_hierarchical_run/weights/best.pt \
     --model_type hierarchical \
-    --data_yaml ./coco_workspace/master_yolo/val.yaml \
-    --hierarchy_json ./coco_workspace/hierarchy.json
+    --data_yaml ./coco_workspace/master_yolo/train.yaml \
+    --hierarchy_json ./coco_workspace/hierarchy.json \
+    --split test
+
+
+
 
 ```
 
@@ -147,9 +156,13 @@ Evaluate the Hierarchical Model masked to Depth 2 constraints:
 ```
 python -m hierarchical_yolo.apples2apples_benchmarks specificity \
     --weights ./runs/coco_hierarchical_run/weights/best.pt \
-    --hierarchical_eval_yaml ./coco_workspace/tier_yolo_full_head/002/val.yaml \
-    --flat_data_yaml ./coco_workspace/tier_flat_specialists/002/val.yaml \
-    --hierarchy_json ./coco_workspace/hierarchy.json
+    --hierarchical_eval_yaml ./coco_workspace/tier_yolo_full_head/002/train.yaml \
+    --flat_data_yaml ./coco_workspace/tier_flat_specialists/002/train.yaml \
+    --hierarchy_json ./coco_workspace/hierarchy.json \
+    --split test
+
+
+
 
 ```
 
