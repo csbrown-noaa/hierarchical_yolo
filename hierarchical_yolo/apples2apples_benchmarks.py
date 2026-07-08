@@ -33,6 +33,8 @@ class FlatObjectnessValidator(DetectionValidator):
         self.names = {0: 'object'}
         if hasattr(self, 'metrics'):
             self.metrics.names = self.names
+        if hasattr(self, 'data'):
+            self.data['names'] = self.names
 
     def preprocess(self, batch):
         batch = super().preprocess(batch)
@@ -70,6 +72,8 @@ class HierarchicalObjectnessValidator(DetectionValidator):
         self.names = {0: 'object'}
         if hasattr(self, 'metrics'):
             self.metrics.names = self.names
+        if hasattr(self, 'data'):
+            self.data['names'] = self.names
 
     def preprocess(self, batch):
         batch = super().preprocess(batch)
@@ -135,7 +139,9 @@ def run_objectness(
     split: str = 'val',
     imgsz: int = 640,
     batch: int = 16,
-    device: str = ''
+    device: str = '',
+    project: str = 'runs/apples2apples',
+    name: str = 'objectness_eval'
 ):
     """
     Executes the Objectness Benchmark for a single model.
@@ -162,14 +168,27 @@ def run_objectness(
             yolo_names = get_yolo_class_names(f)
         hierarchy_obj = load_hierarchy_from_env(yolo_names)
         model = HierarchicalObjectnessYOLO(weights, hierarchy=hierarchy_obj)
-        
-        res = model.val(data=data_yaml, split=split, imgsz=imgsz, batch=batch, device=run_device, plots=False)
     
     else:
         raise ValueError("model_type must be either 'flat' or 'hierarchical'")
 
+    # plots=True enables the native YOLO confusion matrix, PR curves, and rich table output
+    res = model.val(
+        data=data_yaml, 
+        split=split, 
+        imgsz=imgsz, 
+        batch=batch, 
+        device=run_device, 
+        plots=True,
+        save_json=True,
+        project=project,
+        name=name,
+        exist_ok=True
+    )
+
     print("\n" + "="*50)
-    print(f"📊 OBJECTNESS RESULTS (mAP50-95): {res.box.map:.4f}")
+    print(f"📊 FULL OUTPUT SAVED TO: {os.path.join(project, name)}")
+    print(f"✅ GLOBAL OBJECTNESS mAP50-95: {res.box.map:.4f}")
     print("="*50)
     return res
 
@@ -182,7 +201,9 @@ def run_specificity(
     split: str = 'val',
     imgsz: int = 640,
     batch: int = 16,
-    device: str = ''
+    device: str = '',
+    project: str = 'runs/apples2apples',
+    name: str = 'specificity_eval'
 ):
     """
     Executes the Specificity Benchmark for a Hierarchical model.
@@ -211,6 +232,8 @@ def run_specificity(
 
     # 2. Evaluate Masked Hierarchical Model
     model = HierarchicalYOLO(weights, hierarchy=hierarchy_obj)
+    
+    # plots=True enables the native YOLO confusion matrix, PR curves, and rich table output
     res = model.val(
         data=hierarchical_eval_yaml,
         split=split,
@@ -218,11 +241,16 @@ def run_specificity(
         imgsz=imgsz, 
         batch=batch, 
         device=run_device, 
-        plots=False
+        plots=True,
+        save_json=True,
+        project=project,
+        name=name,
+        exist_ok=True
     )
 
     print("\n" + "="*50)
-    print(f"📊 SPECIFICITY RESULTS (mAP50-95): {res.box.map:.4f}")
+    print(f"📊 FULL OUTPUT SAVED TO: {os.path.join(project, name)}")
+    print(f"✅ GLOBAL SPECIFICITY mAP50-95: {res.box.map:.4f}")
     print("="*50)
     return res
 
@@ -241,6 +269,8 @@ if __name__ == "__main__":
     p_obj.add_argument('--imgsz', type=int, default=640)
     p_obj.add_argument('--batch', type=int, default=16)
     p_obj.add_argument('--device', type=str, default='')
+    p_obj.add_argument('--project', type=str, default='runs/apples2apples', help="Directory to save plots/metrics")
+    p_obj.add_argument('--name', type=str, default='objectness_eval', help="Run name for saved outputs")
 
     # Specificity Subparser
     p_spec = subparsers.add_parser("specificity", help="Evaluate a hierarchical model masked to a flat baseline's vocabulary.")
@@ -252,6 +282,8 @@ if __name__ == "__main__":
     p_spec.add_argument('--imgsz', type=int, default=640)
     p_spec.add_argument('--batch', type=int, default=16)
     p_spec.add_argument('--device', type=str, default='')
+    p_spec.add_argument('--project', type=str, default='runs/apples2apples', help="Directory to save plots/metrics")
+    p_spec.add_argument('--name', type=str, default='specificity_eval', help="Run name for saved outputs")
 
     args = parser.parse_args()
 
@@ -264,7 +296,9 @@ if __name__ == "__main__":
             split=args.split,
             imgsz=args.imgsz,
             batch=args.batch,
-            device=args.device
+            device=args.device,
+            project=args.project,
+            name=args.name
         )
     elif args.command == "specificity":
         run_specificity(
@@ -275,5 +309,7 @@ if __name__ == "__main__":
             split=args.split,
             imgsz=args.imgsz,
             batch=args.batch,
-            device=args.device
+            device=args.device,
+            project=args.project,
+            name=args.name
         )
