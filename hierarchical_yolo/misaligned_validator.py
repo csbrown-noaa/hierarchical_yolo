@@ -39,6 +39,19 @@ class AsymmetricalConfusionMatrix:
         """
         Process a batch of predictions and ground truths to update the matrix.
         """
+        # Handle dict-based predictions (Ultralytics >= 8.3 or End-to-End models)
+        if isinstance(detections, dict):
+            pbox = detections.get("bboxes", torch.empty((0, 4)))
+            pconf = detections.get("conf", torch.empty((0,)))
+            pcls = detections.get("cls", torch.empty((0,)))
+            if len(pbox) > 0:
+                detections = torch.cat([pbox, pconf.view(-1, 1), pcls.view(-1, 1)], dim=1)
+            else:
+                detections = torch.empty((0, 6), device=pbox.device)
+        # Handle raw Results objects just in case
+        elif hasattr(detections, 'boxes') and hasattr(detections.boxes, 'data'):
+            detections = detections.boxes.data
+
         if detections is None or len(detections) == 0:
             if labels is not None and len(labels) > 0:
                 for label in labels:
