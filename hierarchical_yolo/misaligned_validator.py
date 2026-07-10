@@ -5,7 +5,6 @@ import torch
 import pandas as pd
 from pathlib import Path
 import matplotlib.pyplot as plt
-import seaborn as sns
 
 from ultralytics import YOLO
 from ultralytics.models.yolo.detect import DetectionValidator
@@ -111,15 +110,27 @@ class AsymmetricalConfusionMatrix:
         df.to_csv(save_dir / "asymmetrical_confusion_matrix.csv")
         print(f"✅ Saved asymmetrical confusion matrix to: {save_dir}/asymmetrical_confusion_matrix.csv")
 
-        # Plotting
+        # Plotting (Pure Matplotlib, mimicking Ultralytics native behavior)
         try:
-            # Dynamic sizing
-            fig_size = max(10, min(30, self.num_targets // 2))
-            plt.figure(figsize=(fig_size, fig_size))
-            sns.heatmap(df, annot=False, cmap='Blues', fmt='g')
+            fig_size = max(10, min(40, max(self.num_targets, self.num_preds) // 3))
+            fig, ax = plt.subplots(figsize=(fig_size, fig_size))
+            
+            # Use imshow instead of seaborn heatmap
+            cax = ax.imshow(self.matrix, cmap='Blues', aspect='auto')
+            fig.colorbar(cax)
+
+            # Set axis labels and ticks
+            ax.set_xticks(np.arange(len(pred_labels)))
+            ax.set_yticks(np.arange(len(target_labels)))
+            
+            # Rotate the tick labels and set their alignment
+            ax.set_xticklabels(pred_labels, rotation=90, ha="right", fontsize=8)
+            ax.set_yticklabels(target_labels, fontsize=8)
+
             plt.ylabel('Ground Truth (Data)')
             plt.xlabel('Prediction (Model)')
             plt.title('Asymmetrical Confusion Matrix')
+            
             plt.tight_layout()
             plt.savefig(save_dir / "asymmetrical_confusion_matrix.png", dpi=150)
             plt.close()
