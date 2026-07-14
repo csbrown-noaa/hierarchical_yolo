@@ -18,6 +18,43 @@ from hierarchical_yolo.yolo_utils import get_yolo_class_names
 # ECOSYSTEM-INDEPENDENT CALIBRATION MATH
 # ==========================================
 
+def _patch_yolo_predictions_json(pred_json_path: str, gt_json_path: str):
+    """
+    Patches Ultralytics YOLO predictions.json to ensure 'image_id' matches 
+    the strict integer IDs required by the official COCO ground truth.
+    """
+    with open(gt_json_path, 'r') as f:
+        gt_data = json.load(f)
+    
+    # Build robust mapping from potential YOLO string IDs to official integer IDs
+    # YOLO typically uses the file stem (e.g., "001" for "001.jpg")
+    id_map = {}
+    for img in gt_data.get('images', []):
+        official_id = img['id']
+        file_stem = Path(img['file_name']).stem
+        
+        id_map[file_stem] = official_id
+        id_map[img['file_name']] = official_id
+        id_map[str(official_id)] = official_id # Fallback if already an int string
+
+    with open(pred_json_path, 'r') as f:
+        preds = json.load(f)
+
+    patched_count = 0
+    for pred in preds:
+        raw_id = str(pred['image_id'])
+        if raw_id in id_map:
+            new_id = id_map[raw_id]
+            if pred['image_id'] != new_id:
+                pred['image_id'] = new_id
+                patched_count += 1
+                
+    if patched_count > 0:
+        print(f"Patched {patched_count} 'image_id's from strings to COCO integers.")
+        with open(pred_json_path, 'w') as f:
+            json.dump(preds, f)
+
+
 def evaluate_coco_calibration(pred_json_path: str, gt_json_path: str, iou_threshold: float = 0.5) -> list:
     """
     End-to-end pipeline to load COCO datasets and perform spatial bipartite 
@@ -40,6 +77,9 @@ def evaluate_coco_calibration(pred_json_path: str, gt_json_path: str, iou_thresh
         A list of tuples, where each tuple contains (confidence_score, is_correct)
         for a single prediction. is_correct is 1 for True Positive, 0 for False Positive.
     """
+    # 1. Patch the YOLO output to conform to strict COCO integer IDs
+    _patch_yolo_predictions_json(pred_json_path, gt_json_path)
+
     print(f"\nLoading Ground Truth: {gt_json_path}")
     cocoGt = COCO(gt_json_path)
         
