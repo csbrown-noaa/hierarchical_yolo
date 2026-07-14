@@ -5,6 +5,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
 
+# Pycocotools Imports
+from pycocotools.coco import COCO
+from pycocotools.cocoeval import COCOeval
+
 # YOLO Imports (Only required for the 'pipeline' command)
 from ultralytics import YOLO
 from hierarchical_yolo.hierarchical_detection import HierarchicalYOLO, load_hierarchy_from_env
@@ -14,39 +18,11 @@ from hierarchical_yolo.yolo_utils import get_yolo_class_names
 # ECOSYSTEM-INDEPENDENT CALIBRATION MATH
 # ==========================================
 
-def calculate_iou(boxA: list, boxB: list) -> float:
+def evaluate_coco_calibration(pred_json_path: str, gt_json_path: str, iou_threshold: float = 0.5) -> list:
     """
-    Calculates Intersection over Union (IoU) for two COCO-format boxes.
-
-    Parameters
-    ----------
-    boxA : list or tuple of float
-        Bounding box A in [x, y, width, height] format.
-    boxB : list or tuple of float
-        Bounding box B in [x, y, width, height] format.
-
-    Returns
-    -------
-    float
-        The Intersection over Union score, bounded between 0.0 and 1.0.
-    """
-    xA = max(boxA[0], boxB[0])
-    yA = max(boxA[1], boxB[1])
-    xB = min(boxA[0] + boxA[2], boxB[0] + boxB[2])
-    yB = min(boxA[1] + boxA[3], boxB[1] + boxB[3])
-
-    interArea = max(0, xB - xA) * max(0, yB - yA)
-    if interArea == 0:
-        return 0.0
-
-    boxAArea = boxA[2] * boxA[3]
-    boxBArea = boxB[2] * boxB[3]
-    return interArea / float(boxAArea + boxBArea - interArea)
-
-
-def load_and_group_coco_data(pred_json_path: str, gt_json_path: str) -> tuple:
-    """
-    Loads COCO predictions and ground truth JSONs and groups them by image ID.
+    End-to-end pipeline to load COCO datasets and perform spatial bipartite 
+    matching using the official pycocotools API. Extracts the raw matching 
+    status for Expected Calibration Error (ECE) calculation.
 
     Parameters
     ----------
@@ -54,120 +30,63 @@ def load_and_group_coco_data(pred_json_path: str, gt_json_path: str) -> tuple:
         The absolute or relative path to the predictions JSON file.
     gt_json_path : str
         The absolute or relative path to the ground truth JSON file.
+    iou_threshold : float, optional
+        The permissive Intersection over Union required to consider a prediction 
+        a True Positive. Defaults to 0.5.
 
     Returns
     -------
-    tuple of (dict, dict)
-        A tuple containing two dictionaries:
-        - preds_by_image: Predictions grouped by image_id.
-        - gt_by_image: Ground truth annotations grouped by image_id.
+    list of tuple
+        A list of tuples, where each tuple contains (confidence_score, is_correct)
+        for a single prediction. is_correct is 1 for True Positive, 0 for False Positive.
     """
     print(f"\nLoading Ground Truth: {gt_json_path}")
-    with open(gt_json_path, 'r') as f:
-        gt_data = json.load(f)
+    cocoGt = COCO(gt_json_path)
         
     print(f"Loading Predictions: {pred_json_path}")
     with open(pred_json_path, 'r') as f:
-        pred_data = json.load(f)
+        preds = json.load(f)
+    if not preds:
+        print("Predictions JSON is empty. Returning empty results.")
+        return []
+        
+    cocoDt = cocoGt.loadRes(pred_json_path)
 
-    # Group Ground Truths by image_id
-    gt_by_image = {}
-    for ann in gt_data.get('annotations', []):
-        img_id = ann['image_id']
-        if img_id not in gt_by_image:
-            gt_by_image[img_id] = []
-        gt_by_image[img_id].append(ann)
-
-    # Group Predictions by image_id
-    preds_by_image = {}
-    for p in pred_data:
-        img_id = p['image_id']
-        if img_id not in preds_by_image:
-            preds_by_image[img_id] = []
-        preds_by_image[img_id].append(p)
-
-    return preds_by_image, gt_by_image
-
-
-def compute_bipartite_matches(preds_by_image: dict, gt_by_image: dict, iou_threshold: float = 0.5) -> list:
-    """
-    Evaluates grouped predictions against ground truths using bipartite matching.
-
-    Parameters
-    ----------
-    preds_by_image : dict
-        Predictions dictionary keyed by image_id.
-    gt_by_image : dict
-        Ground truth dictionary keyed by image_id.
-    iou_threshold : float, optional
-        The minimum Intersection over Union required to consider a prediction 
-        a True Positive. Defaults to 0.5.
-
-    Returns
-    -------
-    list of tuple
-        A list of tuples, where each tuple contains (confidence_score, is_correct)
-        for a single prediction. is_correct is 1 for True Positive, 0 for False Positive.
-    """
-    results = []
-    print(f"Matching predictions to ground truth (IoU >= {iou_threshold})...")
+    # 1. Initialize COCOeval and override parameters for Calibration
+    cocoEval = COCOeval(cocoGt, cocoDt, iouType='bbox')
     
-    for img_id, preds in preds_by_image.items():
-        gts = gt_by_image.get(img_id, [])
-        
-        # COCO Eval standard: evaluate highest confidence predictions first
-        preds = sorted(preds, key=lambda x: x['score'], reverse=True)
-        
-        matched_gt_ids = set()
-        
-        for p in preds:
-            best_iou = 0.0
-            best_gt_id = None
+    # We only care about a single threshold to evaluate probabilistic calibration
+    cocoEval.params.iouThrs = np.array([iou_threshold])
+    # Constrain area ranges and max detections to avoid duplicate matrix building
+    cocoEval.params.areaRng = [[0 ** 2, 1e5 ** 2]]  
+    cocoEval.params.areaRngLbl = ['all']
+    cocoEval.params.maxDets = [300]
+
+    # 2. Run the C-optimized spatial matching (populates cocoEval.evalImgs)
+    cocoEval.evaluate()
+
+    # 3. Intercept and Extract instance-level data before aggregation
+    results = []
+    
+    for e in cocoEval.evalImgs:
+        # e is None if an image had neither ground truths nor predictions
+        if e is None:
+            continue
             
-            for gt in gts:
-                if gt['id'] in matched_gt_ids:
-                    continue
-                # Calibration requires correct class specification
-                if gt['category_id'] != p['category_id']:
-                    continue
-                    
-                iou = calculate_iou(p['bbox'], gt['bbox'])
-                if iou > best_iou:
-                    best_iou = iou
-                    best_gt_id = gt['id']
+        scores = e['dtScores']
+        matches = e['dtMatches'][0]  # Index 0 accesses our single IoU threshold
+        ignores = e['dtIgnore'][0]   
+
+        for score, match, ignore in zip(scores, matches, ignores):
+            # Skip detections that COCO rules dictate should be ignored 
+            # (e.g., matched an 'iscrowd' region or fell outside area limits)
+            if ignore:
+                continue
             
-            if best_iou >= iou_threshold:
-                matched_gt_ids.add(best_gt_id)
-                results.append((p['score'], 1))  # True Positive
-            else:
-                results.append((p['score'], 0))  # False Positive
-
-    print(f"Evaluated {len(results)} total predictions.")
-    return results
-
-
-def evaluate_coco_calibration(pred_json_path: str, gt_json_path: str, iou_threshold: float = 0.5) -> list:
-    """
-    End-to-end pipeline to load COCO datasets and perform bipartite matching.
-
-    Parameters
-    ----------
-    pred_json_path : str
-        The absolute or relative path to the predictions JSON file.
-    gt_json_path : str
-        The absolute or relative path to the ground truth JSON file.
-    iou_threshold : float, optional
-        The minimum Intersection over Union required to consider a prediction 
-        a True Positive. Defaults to 0.5.
-
-    Returns
-    -------
-    list of tuple
-        A list of tuples, where each tuple contains (confidence_score, is_correct)
-        for a single prediction. is_correct is 1 for True Positive, 0 for False Positive.
-    """
-    preds_by_image, gt_by_image = load_and_group_coco_data(pred_json_path, gt_json_path)
-    results = compute_bipartite_matches(preds_by_image, gt_by_image, iou_threshold)
+            is_correct = 1 if match > 0 else 0
+            results.append((score, is_correct))
+            
+    print(f"Extracted {len(results)} valid predictions for calibration analysis.")
     return results
 
 
@@ -290,16 +209,54 @@ def calculate_and_plot_ece(results: list, num_bins: int, output_dir: str, title:
 
 
 # ==========================================
-# ORCHESTRATION PIPELINE
+# ORCHESTRATION PIPELINES
 # ==========================================
 
-def run_calibration_pipeline(
+def _analyze_predictions_json(project: str, name: str, gt_json: str, iou_thres: float, bins: int, title: str):
+    """
+    Shared helper to locate a previously generated YOLO predictions JSON and run the calibration math.
+
+    Parameters
+    ----------
+    project : str
+        The root project directory where the YOLO run is saved.
+    name : str
+        The specific run name containing the predictions (e.g., 'calibration_eval').
+    gt_json : str
+        The absolute path to the ground truth COCO JSON file.
+    iou_thres : float
+        The Intersection over Union required to consider a prediction a True Positive.
+    bins : int
+        The number of confidence bins used to calculate the Expected Calibration Error.
+    title : str
+        The title for the generated Reliability Diagram plot.
+
+    Returns
+    -------
+    None
+        Results are plotted and saved to disk.
+    
+    Raises
+    ------
+    FileNotFoundError
+        If the `predictions.json` is not found in the run directory.
+    """
+    val_dir = os.path.join(project, name)
+    pred_json_path = os.path.join(val_dir, "predictions.json")
+    
+    if not os.path.exists(pred_json_path):
+        raise FileNotFoundError(f"Expected predictions JSON not found at {pred_json_path}. Did Ultralytics validation fail?")
+
+    results = evaluate_coco_calibration(pred_json_path, gt_json, iou_threshold=iou_thres)
+    calculate_and_plot_ece(results, num_bins=bins, output_dir=val_dir, title=title)
+
+
+def evaluate_hierarchical_model_calibration(
     weights: str,
-    model_type: str,
     data_yaml: str,
     gt_json: str,
-    hierarchy_json: str = None,
-    flat_baseline_yaml: str = None,
+    hierarchy_json: str,
+    flat_baseline_yaml: str,
     split: str = 'val',
     imgsz: int = 640,
     batch: int = 16,
@@ -310,77 +267,64 @@ def run_calibration_pipeline(
     name: str = 'calibration_eval'
 ):
     """
-    Wraps YOLO validation to generate predictions.json, then evaluates calibration.
+    Runs inference using a Hierarchical YOLO model clamped to a target tier 
+    (e.g., leaves) to generate COCO-format predictions, then calculates calibration ECE.
 
     Parameters
     ----------
     weights : str
-        Path to the trained model weights file (e.g., 'best.pt').
-    model_type : str
-        The type of model to evaluate. Must be either 'flat' or 'hierarchical'.
+        Path to the trained hierarchical model weights (e.g., 'best.pt').
     data_yaml : str
         Path to the YOLO dataset YAML file to trigger validation.
     gt_json : str
         Absolute path to the ground truth COCO JSON file.
-    hierarchy_json : str, optional
-        Master hierarchy.json file path (required if model_type is 'hierarchical').
-    flat_baseline_yaml : str, optional
-        YAML file defining the leaf-node vocabulary (required if model_type is 'hierarchical').
+    hierarchy_json : str
+        Absolute path to the master hierarchy.json file.
+    flat_baseline_yaml : str
+        YAML file defining the leaf-node target vocabulary to clamp predictions to.
     split : str, optional
-        The dataset split to run validation on. Defaults to 'val'.
+        Dataset split to evaluate (e.g., 'val' or 'test'). Defaults to 'val'.
     imgsz : int, optional
-        The input image size for the model. Defaults to 640.
+        Inference image size. Defaults to 640.
     batch : int, optional
-        The batch size for validation inference. Defaults to 16.
+        Inference batch size. Defaults to 16.
     device : str, optional
-        The device to run inference on (e.g., 'cuda:0', 'cpu'). Defaults to ''.
+        Compute device string (e.g., '0' or 'cpu'). Defaults to ''.
     iou_thres : float, optional
-        The Intersection over Union threshold for matching predictions to ground truth. Defaults to 0.5.
+        IoU threshold for COCO spatial matching. Defaults to 0.5.
     bins : int, optional
-        The number of confidence bins used to calculate the Expected Calibration Error. Defaults to 10.
+        Number of bins for Expected Calibration Error analysis. Defaults to 10.
     project : str, optional
-        The root directory to save YOLO runs and calibration outputs. Defaults to 'runs/apples2apples'.
+        Root directory to save runs and plots. Defaults to 'runs/apples2apples'.
     name : str, optional
-        The specific experiment name/folder for the saved outputs. Defaults to 'calibration_eval'.
+        Run name directory to save outputs. Defaults to 'calibration_eval'.
 
     Returns
     -------
     None
     """
     print("\n" + "="*50)
-    print(f"🚀 RUNNING PIPELINE: CALIBRATION EVALUATION ({model_type.upper()})")
+    print("🚀 RUNNING CALIBRATION EVALUATION (HIERARCHICAL)")
     print("="*50)
 
+    os.environ['HIERARCHY_PATH'] = hierarchy_json
+    
+    # Load the master taxonomy to resolve IDs
+    with open(data_yaml, 'r') as f:
+        yolo_names = get_yolo_class_names(f)
+    hierarchy_obj = load_hierarchy_from_env(yolo_names)
+    
+    # Determine the leaf-node IDs to snap predictions to
+    with open(flat_baseline_yaml, 'r') as f:
+        flat_names_map = get_yolo_class_names(f)
+        
+    subset_names = list(flat_names_map.values())
+    eval_subset_ids = [hierarchy_obj.node_to_idx[name] for name in subset_names if name in hierarchy_obj.node_to_idx]
+    
+    model = HierarchicalYOLO(weights, hierarchy=hierarchy_obj)
     run_device = None if not device else device
-    eval_subset_ids = None
     
-    if model_type == 'hierarchical':
-        if not hierarchy_json or not flat_baseline_yaml:
-            raise ValueError("hierarchical evaluation requires --hierarchy_json and --flat_baseline_yaml.")
-            
-        os.environ['HIERARCHY_PATH'] = hierarchy_json
-        
-        # Load the master taxonomy to resolve IDs
-        with open(data_yaml, 'r') as f:
-            yolo_names = get_yolo_class_names(f)
-        hierarchy_obj = load_hierarchy_from_env(yolo_names)
-        
-        # Determine the leaf-node IDs to snap predictions to
-        with open(flat_baseline_yaml, 'r') as f:
-            flat_names_map = get_yolo_class_names(f)
-            
-        subset_names = list(flat_names_map.values())
-        eval_subset_ids = [hierarchy_obj.node_to_idx[name] for name in subset_names if name in hierarchy_obj.node_to_idx]
-        
-        model = HierarchicalYOLO(weights, hierarchy=hierarchy_obj)
-    
-    elif model_type == 'flat':
-        model = YOLO(weights)
-    else:
-        raise ValueError("model_type must be either 'flat' or 'hierarchical'")
-
-    # 1. Run YOLO validation to dump predictions.json
-    res = model.val(
+    model.val(
         data=data_yaml,
         split=split,
         eval_subset_ids=eval_subset_ids,  # Clamps hierarchical predictions to leaf nodes
@@ -393,18 +337,77 @@ def run_calibration_pipeline(
         name=name,
         exist_ok=True
     )
-
-    # 2. Locate the dumped JSON (Ultralytics standard output naming)
-    val_dir = os.path.join(project, name)
-    pred_json_path = os.path.join(val_dir, "predictions.json")
     
-    if not os.path.exists(pred_json_path):
-        raise FileNotFoundError(f"Expected predictions JSON not found at {pred_json_path}. Did Ultralytics validation fail?")
+    _analyze_predictions_json(project, name, gt_json, iou_thres, bins, "Hierarchical Model Calibration")
 
-    # 3. Run the independent Calibration Math
-    title = f"{model_type.capitalize()} Model Calibration"
-    results = evaluate_coco_calibration(pred_json_path, gt_json, iou_threshold=iou_thres)
-    calculate_and_plot_ece(results, num_bins=bins, output_dir=val_dir, title=title)
+
+def evaluate_flat_model_calibration(
+    weights: str,
+    data_yaml: str,
+    gt_json: str,
+    split: str = 'val',
+    imgsz: int = 640,
+    batch: int = 16,
+    device: str = '',
+    iou_thres: float = 0.5,
+    bins: int = 10,
+    project: str = 'runs/apples2apples',
+    name: str = 'calibration_eval'
+):
+    """
+    Runs standard inference using a Flat YOLO model to generate COCO-format 
+    predictions, then calculates calibration ECE.
+
+    Parameters
+    ----------
+    weights : str
+        Path to the trained standard flat model weights (e.g., 'best.pt').
+    data_yaml : str
+        Path to the YOLO dataset YAML file to trigger validation.
+    gt_json : str
+        Absolute path to the ground truth COCO JSON file.
+    split : str, optional
+        Dataset split to evaluate (e.g., 'val' or 'test'). Defaults to 'val'.
+    imgsz : int, optional
+        Inference image size. Defaults to 640.
+    batch : int, optional
+        Inference batch size. Defaults to 16.
+    device : str, optional
+        Compute device string (e.g., '0' or 'cpu'). Defaults to ''.
+    iou_thres : float, optional
+        IoU threshold for COCO spatial matching. Defaults to 0.5.
+    bins : int, optional
+        Number of bins for Expected Calibration Error analysis. Defaults to 10.
+    project : str, optional
+        Root directory to save runs and plots. Defaults to 'runs/apples2apples'.
+    name : str, optional
+        Run name directory to save outputs. Defaults to 'calibration_eval'.
+
+    Returns
+    -------
+    None
+    """
+    print("\n" + "="*50)
+    print("🚀 RUNNING CALIBRATION EVALUATION (FLAT)")
+    print("="*50)
+
+    model = YOLO(weights)
+    run_device = None if not device else device
+    
+    model.val(
+        data=data_yaml,
+        split=split,
+        imgsz=imgsz, 
+        batch=batch, 
+        device=run_device, 
+        plots=False,         
+        save_json=True,      
+        project=project,
+        name=name,
+        exist_ok=True
+    )
+
+    _analyze_predictions_json(project, name, gt_json, iou_thres, bins, "Flat Model Calibration")
 
 
 if __name__ == "__main__":
@@ -440,22 +443,39 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.command == "pipeline":
-        run_calibration_pipeline(
-            weights=args.weights,
-            model_type=args.model_type,
-            data_yaml=args.data_yaml,
-            gt_json=args.gt_json,
-            hierarchy_json=args.hierarchy_json,
-            flat_baseline_yaml=args.flat_baseline_yaml,
-            split=args.split,
-            imgsz=args.imgsz,
-            batch=args.batch,
-            device=args.device,
-            iou_thres=args.iou_thres,
-            bins=args.bins,
-            project=args.project,
-            name=args.name
-        )
+        if args.model_type == 'hierarchical':
+            if not args.hierarchy_json or not args.flat_baseline_yaml:
+                parser.error("Hierarchical evaluation requires --hierarchy_json and --flat_baseline_yaml.")
+                
+            evaluate_hierarchical_model_calibration(
+                weights=args.weights,
+                data_yaml=args.data_yaml,
+                gt_json=args.gt_json,
+                hierarchy_json=args.hierarchy_json,
+                flat_baseline_yaml=args.flat_baseline_yaml,
+                split=args.split,
+                imgsz=args.imgsz,
+                batch=args.batch,
+                device=args.device,
+                iou_thres=args.iou_thres,
+                bins=args.bins,
+                project=args.project,
+                name=args.name
+            )
+        elif args.model_type == 'flat':
+            evaluate_flat_model_calibration(
+                weights=args.weights,
+                data_yaml=args.data_yaml,
+                gt_json=args.gt_json,
+                split=args.split,
+                imgsz=args.imgsz,
+                batch=args.batch,
+                device=args.device,
+                iou_thres=args.iou_thres,
+                bins=args.bins,
+                project=args.project,
+                name=args.name
+            )
     elif args.command == "eval_json":
         res = evaluate_coco_calibration(args.pred_json, args.gt_json, args.iou_thres)
         calculate_and_plot_ece(res, args.bins, args.output_dir, args.title)
