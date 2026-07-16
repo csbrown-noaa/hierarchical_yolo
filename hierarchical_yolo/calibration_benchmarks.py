@@ -1,6 +1,7 @@
 import os
 import json
 import argparse
+import tempfile
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
@@ -18,16 +19,33 @@ from hierarchical_yolo.yolo_utils import get_yolo_class_names
 # ECOSYSTEM-INDEPENDENT CALIBRATION MATH
 # ==========================================
 
-def _patch_yolo_predictions_json(pred_json_path: str, gt_json_path: str):
+def align_coco_jsons(pred_json_path: str, gt_json_path: str, out_pred_path: str, out_gt_path: str):
     """
-    Patches Ultralytics YOLO predictions.json to ensure 'image_id' matches 
-    the strict integer IDs required by the official COCO ground truth.
+    Out-of-band alignment tool. Loads Ground Truth and Predictions, 
+    re-indexes categories to match, resolves image ID discrepancies, 
+    and writes the perfectly aligned JSONs to temporary files.
     """
     with open(gt_json_path, 'r') as f:
         gt_data = json.load(f)
-    
-    # Build robust mapping from potential YOLO string IDs to official integer IDs
-    # YOLO typically uses the file stem (e.g., "001" for "001.jpg")
+    with open(pred_json_path, 'r') as f:
+        pred_data = json.load(f)
+
+    # 1. Re-index GT Categories (1-indexed, Alphabetical)
+    category_name_map = {cat['name']: cat for cat in gt_data.get('categories', [])}
+    gt_cat_remap = {}
+    for i, (name, cat) in enumerate(sorted(category_name_map.items())):
+        new_id = i + 1
+        gt_cat_remap[cat['id']] = new_id
+        cat['id'] = new_id
+        
+    for ann in gt_data.get('annotations', []):
+        ann['category_id'] = gt_cat_remap[ann['category_id']]
+
+    # 2. Re-index Prediction Categories (+1 offset from YOLO's 0-index)
+    for pred in pred_data:
+        pred['category_id'] = int(pred['category_id']) + 1
+
+    # 3. Align Image IDs
     id_map = {}
     for img in gt_data.get('images', []):
         official_id = img['id']
@@ -37,22 +55,40 @@ def _patch_yolo_predictions_json(pred_json_path: str, gt_json_path: str):
         id_map[img['file_name']] = official_id
         id_map[str(official_id)] = official_id # Fallback if already an int string
 
-    with open(pred_json_path, 'r') as f:
-        preds = json.load(f)
-
-    patched_count = 0
-    for pred in preds:
-        raw_id = str(pred['image_id'])
-        if raw_id in id_map:
-            new_id = id_map[raw_id]
-            if pred['image_id'] != new_id:
-                pred['image_id'] = new_id
-                patched_count += 1
-                
-    if patched_count > 0:
-        print(f"Patched {patched_count} 'image_id's from strings to COCO integers.")
-        with open(pred_json_path, 'w') as f:
-            json.dump(preds, f)
+    patched_img_count = 0
+    unmatched_imgs = set()
+    
+    for pred in pred_data:
+        raw_img_id = str(pred['image_id'])
+        if raw_img_id in id_map:
+            new_img_id = id_map[raw_img_id]
+            if pred['image_id'] != new_img_id:
+                pred['image_id'] = new_img_id
+                patched_img_count += 1
+        else:
+            unmatched_imgs.add(raw_img_id)
+            
+    # 4. Console Logging
+    print("\n" + "-"*50)
+    print("🔄 OUT-OF-BAND JSON ALIGNMENT")
+    print("-"*50)
+    print("✅ Re-indexed GT categories to 1-based contiguous integers.")
+    print("✅ Offset Prediction categories by +1 to align with GT.")
+    
+    if patched_img_count > 0:
+        print(f"⚠️ Mapped {patched_img_count} prediction 'image_id's to official GT integers.")
+    else:
+        print(f"✅ All prediction 'image_id's were already perfectly aligned with GT.")
+        
+    if unmatched_imgs:
+        print(f"❌ WARNING: Found {len(unmatched_imgs)} predicted image IDs that did not match any Ground Truth image!")
+    print("-"*50)
+        
+    # 5. Write out to the temporary targets
+    with open(out_gt_path, 'w') as f:
+        json.dump(gt_data, f)
+    with open(out_pred_path, 'w') as f:
+        json.dump(pred_data, f)
 
 
 def evaluate_coco_calibration(pred_json_path: str, gt_json_path: str, iou_threshold: float = 0.5) -> list:
@@ -61,12 +97,14 @@ def evaluate_coco_calibration(pred_json_path: str, gt_json_path: str, iou_thresh
     matching using the official pycocotools API. Extracts the raw matching 
     status for Expected Calibration Error (ECE) calculation.
 
+    Assumes pred_json_path and gt_json_path are already perfectly aligned.
+
     Parameters
     ----------
     pred_json_path : str
-        The absolute or relative path to the predictions JSON file.
+        The absolute or relative path to the aligned predictions JSON file.
     gt_json_path : str
-        The absolute or relative path to the ground truth JSON file.
+        The absolute or relative path to the aligned ground truth JSON file.
     iou_threshold : float, optional
         The permissive Intersection over Union required to consider a prediction 
         a True Positive. Defaults to 0.5.
@@ -77,9 +115,6 @@ def evaluate_coco_calibration(pred_json_path: str, gt_json_path: str, iou_thresh
         A list of tuples, where each tuple contains (confidence_score, is_correct)
         for a single prediction. is_correct is 1 for True Positive, 0 for False Positive.
     """
-    # 1. Patch the YOLO output to conform to strict COCO integer IDs
-    _patch_yolo_predictions_json(pred_json_path, gt_json_path)
-
     print(f"\nLoading Ground Truth: {gt_json_path}")
     cocoGt = COCO(gt_json_path)
         
@@ -254,7 +289,8 @@ def calculate_and_plot_ece(results: list, num_bins: int, output_dir: str, title:
 
 def _analyze_predictions_json(project: str, name: str, gt_json: str, iou_thres: float, bins: int, title: str):
     """
-    Shared helper to locate a previously generated YOLO predictions JSON and run the calibration math.
+    Shared helper to locate a previously generated YOLO predictions JSON, align it with the 
+    Ground Truth in a temporary directory, and run the calibration math.
 
     Parameters
     ----------
@@ -271,11 +307,6 @@ def _analyze_predictions_json(project: str, name: str, gt_json: str, iou_thres: 
     title : str
         The title for the generated Reliability Diagram plot.
 
-    Returns
-    -------
-    None
-        Results are plotted and saved to disk.
-    
     Raises
     ------
     FileNotFoundError
@@ -287,7 +318,14 @@ def _analyze_predictions_json(project: str, name: str, gt_json: str, iou_thres: 
     if not os.path.exists(pred_json_path):
         raise FileNotFoundError(f"Expected predictions JSON not found at {pred_json_path}. Did Ultralytics validation fail?")
 
-    results = evaluate_coco_calibration(pred_json_path, gt_json, iou_threshold=iou_thres)
+    # Utilize tempfile context manager to handle automatic OS cleanup 
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_gt = os.path.join(temp_dir, "aligned_gt.json")
+        temp_pred = os.path.join(temp_dir, "aligned_preds.json")
+        
+        align_coco_jsons(pred_json_path, gt_json, temp_pred, temp_gt)
+        results = evaluate_coco_calibration(temp_pred, temp_gt, iou_threshold=iou_thres)
+        
     calculate_and_plot_ece(results, num_bins=bins, output_dir=val_dir, title=title)
 
 
@@ -309,39 +347,6 @@ def evaluate_hierarchical_model_calibration(
     """
     Runs inference using a Hierarchical YOLO model clamped to a target tier 
     (e.g., leaves) to generate COCO-format predictions, then calculates calibration ECE.
-
-    Parameters
-    ----------
-    weights : str
-        Path to the trained hierarchical model weights (e.g., 'best.pt').
-    data_yaml : str
-        Path to the YOLO dataset YAML file to trigger validation.
-    gt_json : str
-        Absolute path to the ground truth COCO JSON file.
-    hierarchy_json : str
-        Absolute path to the master hierarchy.json file.
-    flat_baseline_yaml : str
-        YAML file defining the leaf-node target vocabulary to clamp predictions to.
-    split : str, optional
-        Dataset split to evaluate (e.g., 'val' or 'test'). Defaults to 'val'.
-    imgsz : int, optional
-        Inference image size. Defaults to 640.
-    batch : int, optional
-        Inference batch size. Defaults to 16.
-    device : str, optional
-        Compute device string (e.g., '0' or 'cpu'). Defaults to ''.
-    iou_thres : float, optional
-        IoU threshold for COCO spatial matching. Defaults to 0.5.
-    bins : int, optional
-        Number of bins for Expected Calibration Error analysis. Defaults to 10.
-    project : str, optional
-        Root directory to save runs and plots. Defaults to 'runs/apples2apples'.
-    name : str, optional
-        Run name directory to save outputs. Defaults to 'calibration_eval'.
-
-    Returns
-    -------
-    None
     """
     print("\n" + "="*50)
     print("🚀 RUNNING CALIBRATION EVALUATION (HIERARCHICAL)")
@@ -397,35 +402,6 @@ def evaluate_flat_model_calibration(
     """
     Runs standard inference using a Flat YOLO model to generate COCO-format 
     predictions, then calculates calibration ECE.
-
-    Parameters
-    ----------
-    weights : str
-        Path to the trained standard flat model weights (e.g., 'best.pt').
-    data_yaml : str
-        Path to the YOLO dataset YAML file to trigger validation.
-    gt_json : str
-        Absolute path to the ground truth COCO JSON file.
-    split : str, optional
-        Dataset split to evaluate (e.g., 'val' or 'test'). Defaults to 'val'.
-    imgsz : int, optional
-        Inference image size. Defaults to 640.
-    batch : int, optional
-        Inference batch size. Defaults to 16.
-    device : str, optional
-        Compute device string (e.g., '0' or 'cpu'). Defaults to ''.
-    iou_thres : float, optional
-        IoU threshold for COCO spatial matching. Defaults to 0.5.
-    bins : int, optional
-        Number of bins for Expected Calibration Error analysis. Defaults to 10.
-    project : str, optional
-        Root directory to save runs and plots. Defaults to 'runs/apples2apples'.
-    name : str, optional
-        Run name directory to save outputs. Defaults to 'calibration_eval'.
-
-    Returns
-    -------
-    None
     """
     print("\n" + "="*50)
     print("🚀 RUNNING CALIBRATION EVALUATION (FLAT)")
@@ -517,5 +493,10 @@ if __name__ == "__main__":
                 name=args.name
             )
     elif args.command == "eval_json":
-        res = evaluate_coco_calibration(args.pred_json, args.gt_json, args.iou_thres)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_gt = os.path.join(temp_dir, "aligned_gt.json")
+            temp_pred = os.path.join(temp_dir, "aligned_preds.json")
+            align_coco_jsons(args.pred_json, args.gt_json, temp_pred, temp_gt)
+            res = evaluate_coco_calibration(temp_pred, temp_gt, args.iou_thres)
+            
         calculate_and_plot_ece(res, args.bins, args.output_dir, args.title)
