@@ -19,33 +19,41 @@ from hierarchical_yolo.yolo_utils import get_yolo_class_names
 # ECOSYSTEM-INDEPENDENT CALIBRATION MATH
 # ==========================================
 
-def align_coco_jsons(pred_json_path: str, gt_json_path: str, out_pred_path: str, out_gt_path: str):
+def populate_coco_categories(preds_list: list, yolo_idx_to_name: dict) -> list:
     """
-    Out-of-band alignment tool. Loads Ground Truth and Predictions, 
-    re-indexes categories to match, resolves image ID discrepancies, 
-    and writes the perfectly aligned JSONs to temporary files.
+    Injects the string class name into each headless YOLO prediction 
+    using the mapping from the YOLO dataset YAML.
     """
-    with open(gt_json_path, 'r') as f:
-        gt_data = json.load(f)
-    with open(pred_json_path, 'r') as f:
-        pred_data = json.load(f)
+    for pred in preds_list:
+        yolo_id = int(pred['category_id'])
+        if yolo_id in yolo_idx_to_name:
+            pred['category_name'] = yolo_idx_to_name[yolo_id]
+        else:
+            pred['category_name'] = "UNKNOWN"
+    return preds_list
 
-    # 1. Re-index GT Categories (1-indexed, Alphabetical)
-    category_name_map = {cat['name']: cat for cat in gt_data.get('categories', [])}
-    gt_cat_remap = {}
-    for i, (name, cat) in enumerate(sorted(category_name_map.items())):
-        new_id = i + 1
-        gt_cat_remap[cat['id']] = new_id
-        cat['id'] = new_id
-        
-    for ann in gt_data.get('annotations', []):
-        ann['category_id'] = gt_cat_remap[ann['category_id']]
+def align_coco_jsons(pred_data: list, gt_data: dict) -> tuple[list, dict]:
+    """
+    In-memory alignment tool. Resolves image ID discrepancies and 
+    maps prediction categories to official Ground Truth IDs by name.
+    """
+    # 1. Map Prediction Categories to GT Categories by Name
+    gt_name_to_id = {cat['name']: cat['id'] for cat in gt_data.get('categories', [])}
+    
+    patched_cat_count = 0
+    unmatched_cats = set()
 
-    # 2. Re-index Prediction Categories (+1 offset from YOLO's 0-index)
     for pred in pred_data:
-        pred['category_id'] = int(pred['category_id']) + 1
-
-    # 3. Align Image IDs
+        name = pred.get('category_name')
+        if name in gt_name_to_id:
+            new_id = gt_name_to_id[name]
+            if pred['category_id'] != new_id:
+                pred['category_id'] = new_id
+                patched_cat_count += 1
+        else:
+            unmatched_cats.add(name)
+            
+    # 2. Align Image IDs
     id_map = {}
     for img in gt_data.get('images', []):
         official_id = img['id']
@@ -68,13 +76,14 @@ def align_coco_jsons(pred_json_path: str, gt_json_path: str, out_pred_path: str,
         else:
             unmatched_imgs.add(raw_img_id)
             
-    # 4. Console Logging
+    # 3. Console Logging
     print("\n" + "-"*50)
-    print("🔄 OUT-OF-BAND JSON ALIGNMENT")
+    print("🔄 IN-MEMORY JSON ALIGNMENT (BY NAME)")
     print("-"*50)
-    print("✅ Re-indexed GT categories to 1-based contiguous integers.")
-    print("✅ Offset Prediction categories by +1 to align with GT.")
-    
+    print(f"✅ Mapped {patched_cat_count} prediction categories to official GT IDs via string matching.")
+    if unmatched_cats:
+        print(f"❌ WARNING: Found {len(unmatched_cats)} predicted category names missing from Ground Truth: {unmatched_cats}")
+
     if patched_img_count > 0:
         print(f"⚠️ Mapped {patched_img_count} prediction 'image_id's to official GT integers.")
     else:
@@ -84,12 +93,37 @@ def align_coco_jsons(pred_json_path: str, gt_json_path: str, out_pred_path: str,
         print(f"❌ WARNING: Found {len(unmatched_imgs)} predicted image IDs that did not match any Ground Truth image!")
     print("-"*50)
         
-    # 5. Write out to the temporary targets
-    with open(out_gt_path, 'w') as f:
-        json.dump(gt_data, f)
-    with open(out_pred_path, 'w') as f:
-        json.dump(pred_data, f)
+    return pred_data, gt_data
 
+def _verify_alignment(pred_data: list, gt_data: dict):
+    """
+    Standalone diagnostic function to verify that the aligned predictions 
+    perfectly map to the ground truth structures. Fails hard if mismatches exist.
+    """
+    print("🔍 Verifying alignment integrity...")
+    gt_image_ids = {img['id'] for img in gt_data.get('images', [])}
+    gt_category_ids = {cat['id'] for cat in gt_data.get('categories', [])}
+    
+    invalid_images = set()
+    invalid_categories = set()
+    
+    for pred in pred_data:
+        if pred['image_id'] not in gt_image_ids:
+            invalid_images.add(pred['image_id'])
+        if pred['category_id'] not in gt_category_ids:
+            invalid_categories.add(pred['category_id'])
+            
+    if invalid_images or invalid_categories:
+        error_msg = "\n❌ Alignment Verification Failed!\n"
+        if invalid_images:
+            error_msg += f"  - Found {len(invalid_images)} predicted image_ids not in Ground Truth.\n"
+            error_msg += f"    Examples: {list(invalid_images)[:5]}\n"
+        if invalid_categories:
+            error_msg += f"  - Found {len(invalid_categories)} predicted category_ids not in Ground Truth.\n"
+            error_msg += f"    Examples: {list(invalid_categories)[:5]}\n"
+        raise AssertionError(error_msg)
+        
+    print("✅ Alignment verification passed! All prediction IDs exist in Ground Truth.")
 
 def evaluate_coco_calibration(pred_json_path: str, gt_json_path: str, iou_threshold: float = 0.5) -> list:
     """
@@ -287,10 +321,10 @@ def calculate_and_plot_ece(results: list, num_bins: int, output_dir: str, title:
 # ORCHESTRATION PIPELINES
 # ==========================================
 
-def _analyze_predictions_json(project: str, name: str, gt_json: str, iou_thres: float, bins: int, title: str):
+def _analyze_predictions_json(project: str, name: str, gt_json: str, data_yaml: str, iou_thres: float, bins: int, title: str):
     """
     Shared helper to locate a previously generated YOLO predictions JSON, align it with the 
-    Ground Truth in a temporary directory, and run the calibration math.
+    Ground Truth in memory, and run the calibration math.
 
     Parameters
     ----------
@@ -318,12 +352,33 @@ def _analyze_predictions_json(project: str, name: str, gt_json: str, iou_thres: 
     if not os.path.exists(pred_json_path):
         raise FileNotFoundError(f"Expected predictions JSON not found at {pred_json_path}. Did Ultralytics validation fail?")
 
-    # Utilize tempfile context manager to handle automatic OS cleanup 
+    # 1. Load everything into memory
+    with open(gt_json, 'r') as f:
+        gt_data = json.load(f)
+    with open(pred_json_path, 'r') as f:
+        pred_data = json.load(f)
+    with open(data_yaml, 'r') as f:
+        yolo_idx_to_name = get_yolo_class_names(f)
+        # Ensure indices are integers for mapping
+        yolo_idx_to_name = {int(k): v for k, v in yolo_idx_to_name.items()}
+
+    # 2. Process in-memory dicts
+    pred_data = populate_coco_categories(pred_data, yolo_idx_to_name)
+    pred_data, gt_data = align_coco_jsons(pred_data, gt_data)
+    
+    # 3. Verify alignment before feeding into pycocotools
+    _verify_alignment(pred_data, gt_data)
+
+    # 4. Utilize tempfile context manager to handle automatic OS cleanup 
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_gt = os.path.join(temp_dir, "aligned_gt.json")
         temp_pred = os.path.join(temp_dir, "aligned_preds.json")
         
-        align_coco_jsons(pred_json_path, gt_json, temp_pred, temp_gt)
+        with open(temp_gt, 'w') as f:
+            json.dump(gt_data, f)
+        with open(temp_pred, 'w') as f:
+            json.dump(pred_data, f)
+            
         results = evaluate_coco_calibration(temp_pred, temp_gt, iou_threshold=iou_thres)
         
     calculate_and_plot_ece(results, num_bins=bins, output_dir=val_dir, title=title)
@@ -383,7 +438,7 @@ def evaluate_hierarchical_model_calibration(
         exist_ok=True
     )
     
-    _analyze_predictions_json(project, name, gt_json, iou_thres, bins, "Hierarchical Model Calibration")
+    _analyze_predictions_json(project, name, gt_json, data_yaml, iou_thres, bins, "Hierarchical Model Calibration")
 
 
 def evaluate_flat_model_calibration(
@@ -423,7 +478,7 @@ def evaluate_flat_model_calibration(
         exist_ok=True
     )
 
-    _analyze_predictions_json(project, name, gt_json, iou_thres, bins, "Flat Model Calibration")
+    _analyze_predictions_json(project, name, gt_json, data_yaml, iou_thres, bins, "Flat Model Calibration")
 
 
 if __name__ == "__main__":
@@ -451,6 +506,7 @@ if __name__ == "__main__":
     p_json = subparsers.add_parser("eval_json", help="Evaluate ECE using preexisting COCO predictions and GT JSONs.")
     p_json.add_argument('--pred_json', required=True, type=str, help="Path to predictions JSON")
     p_json.add_argument('--gt_json', required=True, type=str, help="Path to ground truth JSON")
+    p_json.add_argument('--data_yaml', required=True, type=str, help="Path to YOLO dataset YAML to resolve class names")
     p_json.add_argument('--iou_thres', type=float, default=0.5, help="IoU threshold")
     p_json.add_argument('--bins', type=int, default=10, help="Number of confidence bins")
     p_json.add_argument('--output_dir', type=str, default='runs/calibration/json_eval')
@@ -493,10 +549,29 @@ if __name__ == "__main__":
                 name=args.name
             )
     elif args.command == "eval_json":
+        with open(args.gt_json, 'r') as f:
+            gt_data = json.load(f)
+        with open(args.pred_json, 'r') as f:
+            pred_data = json.load(f)
+        with open(args.data_yaml, 'r') as f:
+            yolo_idx_to_name = get_yolo_class_names(f)
+            yolo_idx_to_name = {int(k): v for k, v in yolo_idx_to_name.items()}
+
+        pred_data = populate_coco_categories(pred_data, yolo_idx_to_name)
+        pred_data, gt_data = align_coco_jsons(pred_data, gt_data)
+        
+        # Verify alignment before feeding into pycocotools
+        _verify_alignment(pred_data, gt_data)
+
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_gt = os.path.join(temp_dir, "aligned_gt.json")
             temp_pred = os.path.join(temp_dir, "aligned_preds.json")
-            align_coco_jsons(args.pred_json, args.gt_json, temp_pred, temp_gt)
+            
+            with open(temp_gt, 'w') as f:
+                json.dump(gt_data, f)
+            with open(temp_pred, 'w') as f:
+                json.dump(pred_data, f)
+
             res = evaluate_coco_calibration(temp_pred, temp_gt, args.iou_thres)
             
         calculate_and_plot_ece(res, args.bins, args.output_dir, args.title)
