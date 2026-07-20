@@ -25,11 +25,22 @@ def populate_coco_categories(preds_list: list, yolo_idx_to_name: dict) -> list:
     using the mapping from the YOLO dataset YAML.
     """
     for pred in preds_list:
-        yolo_id = int(pred['category_id'])
-        if yolo_id in yolo_idx_to_name:
-            pred['category_name'] = yolo_idx_to_name[yolo_id]
+        # ---------------------------------------------------------------------
+        # ULTRALYTICS INDEX SHIFT FIX
+        # ---------------------------------------------------------------------
+        # Ultralytics natively applies a +1 shift to all category IDs when exporting 
+        # to predictions.json if the dataset is not official COCO80.
+        # (Reference: self.class_map = list(range(1, len(model.names) + 1)))
+        # We must subtract 1 to recover the original 0-indexed YOLO YAML class ID.
+        # ---------------------------------------------------------------------
+        shifted_id = int(pred['category_id'])
+        native_yolo_id = shifted_id - 1
+        
+        if native_yolo_id in yolo_idx_to_name:
+            pred['category_name'] = yolo_idx_to_name[native_yolo_id]
         else:
             pred['category_name'] = "UNKNOWN"
+            
     return preds_list
 
 def align_coco_jsons(pred_data: list, gt_data: dict) -> tuple[list, dict]:
