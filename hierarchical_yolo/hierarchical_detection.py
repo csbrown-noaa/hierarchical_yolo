@@ -373,7 +373,7 @@ class HierarchicalDetectionPredictor(ultralytics.models.yolo.detect.DetectionPre
             img_path = self.batch[0][i] if hasattr(self, 'batch') and self.batch is not None else f"image_{i}"
             
             res = Results(orig_img, path=img_path, names=self.model.names, boxes=final_pred)
-            res.hierarchical_soft_scores = soft_scores 
+            res.soft_scores = soft_scores 
             results.append(res)
             
         return results

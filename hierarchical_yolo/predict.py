@@ -127,7 +127,7 @@ def main():
         all_boxes.append(res.boxes.xyxy)
         
         # Extract custom soft scores (N, C), falling back gracefully if missing
-        soft_scores = getattr(res, 'hierarchical_soft_scores', None)
+        soft_scores = getattr(res, 'soft_scores', None)
         if soft_scores is None:
             soft_scores = torch.zeros((res.boxes.xyxy.shape[0], len(model.names)), device=res.boxes.xyxy.device)
             
