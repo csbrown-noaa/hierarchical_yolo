@@ -47,70 +47,21 @@ def load_hierarchy_from_env(yolo_names: dict) -> Hierarchy:
     return Hierarchy(raw_tree, name_to_id)
 
 
-def pack_ultralytics_tensors(filtered_batch: list, device: torch.device) -> list[torch.Tensor]:
+def _hierarchical_spatial_filter(preds, hierarchy, args):
     """
-    Translates filtered path outputs back into standard Ultralytics (N, 6) tensor arrays.
-    """
-    results_tensors = []
-    for boxes, paths, scores in filtered_batch:
-        boxes_t = boxes.T  # (N_filtered, 4)
-        
-        final_pred = torch.zeros((len(paths), 6), device=device)
-        if len(paths) > 0:
-            final_pred[:, :4] = boxes_t
-            # Conf: True Marginal score of the deepest surviving node
-            final_pred[:, 4] = torch.tensor([s[-1].item() for s in scores], device=device, dtype=torch.float)
-            # Cls: ID of the deepest surviving node
-            final_pred[:, 5] = torch.tensor([p[-1] for p in paths], device=device, dtype=torch.float)
-        
-        results_tensors.append(final_pred)
-        
-    return results_tensors
-
-
-def pack_ultralytics_dicts(filtered_batch: list, device: torch.device) -> list[dict]:
-    """
-    Converts the filtered results into the dictionary format expected by the 
-    Ultralytics v8.3+ validation engine metrics calculator.
-    """
-    repacked_results = []
-    for boxes, paths, scores in filtered_batch:
-        if len(paths) == 0:
-            repacked_results.append({
-                "bboxes": torch.zeros((0, 4), device=device),
-                "conf": torch.zeros((0,), device=device),
-                "cls": torch.zeros((0,), device=device)
-            })
-        else:
-            boxes_t = boxes.T
-            conf = torch.tensor([s[-1].item() for s in scores], device=device, dtype=torch.float)
-            cls = torch.tensor([p[-1] for p in paths], device=device, dtype=torch.float)
-            repacked_results.append({
-                "bboxes": boxes_t,
-                "conf": conf,
-                "cls": cls
-            })
-    return repacked_results
-
-
-def _hierarchical_postprocess(preds, hierarchy, args, eval_subset_ids=None):
-    """
-    Shared post-processing engine for both Validation and Prediction.
-    Converts to marginals, runs Root-Anchored NMS, traverses the hierarchy,
-    and cleanly snaps to the active vocabulary tier (if provided).
-    
-    Returns raw, unformatted python lists isolated from framework-specific shapes.
+    Phase 1: Converts conditional predictions to marginals and applies 
+    root-anchored Non-Max Suppression.
     """
     preds_tensor = preds[0] if isinstance(preds, (tuple, list)) else preds
 
-    # 1. Convert to true Marginals natively so NMS and greedy traversal use exact math
+    # 1. Convert conditionals to true marginal probabilities natively
     marginals_tensor = conditionals_to_marginals(
         preds_tensor, 
         hierarchy.index_tensor, 
-        eval_subset_ids=None # Do not mask yet; allow uninhibited traversal
+        eval_subset_ids=None 
     )
 
-    # 2. Raw Output & Root-Anchored NMS
+    # 2. Root-Anchored NMS: Filter bounding boxes based on objectness (root probability)
     _, nms_idxs = non_max_suppression(
         marginals_tensor,
         args.conf,
@@ -122,48 +73,67 @@ def _hierarchical_postprocess(preds, hierarchy, args, eval_subset_ids=None):
         return_idxs=True
     )
 
-    # 3. Extract Full Score Vectors & Compute Optimal Paths
-    bscores = []
+    # 3. Extract final bounded boxes and their corresponding full soft-score vectors
     all_boxes = []
+    bscores = []
     for i, idx in enumerate(nms_idxs):
         flat_idx = idx.flatten().long()
-        # nms_output shape: (4+C, N_filtered)
         nms_output = marginals_tensor[i].index_select(1, flat_idx)
         
         all_boxes.append(nms_output[:4, :])
         bscores.append(nms_output[4:, :])
+        
+    return all_boxes, bscores
+
+
+def _hierarchical_taxonomic_resolve(all_boxes, bscores, hierarchy, args, eval_subset_ids=None):
+    """
+    Phase 2: Traverses the taxonomy graph, extracts optimal paths, 
+    truncates by marginal confidence, and filters empty predictions.
     
-    # Greedy Path Traversal
+    Returns parallel lists of tensors: (boxes, conf, cls, soft_scores)
+    """
+    # 4. Greedy Path Traversal: Compute optimal taxonomy paths based on soft scores
     raw_paths, raw_path_scores = optimal_hierarchical_path(
         bscores, 
         hierarchy.parent_child_tensor_tree, 
         hierarchy.roots
     )
     
-    # 4. Truncate using Marginal Probabilities
+    # 5. Marginal Truncation: Cut paths where confidence drops below the threshold
     trunc_results = batch_truncate_paths_marginals(
         raw_paths, raw_path_scores, threshold=args.conf
     )
 
-    # 5. Snap-to-Vocabulary ("Casting Up")
+    # 6. Snap-to-Vocabulary ("Casting Up"): Optionally force predictions to a specific tier
     if eval_subset_ids is not None:
         trunc_results = snap_to_vocabulary(trunc_results, eval_subset_ids)
 
-    # Separate paths and scores for the index filter
     trunc_paths = [res[0] for res in trunc_results]
     trunc_scores = [res[1] for res in trunc_results]
 
-    # 6. Empty Path Filtering (Box-Blind Index Resolution)
+    # 7. Empty Path Filtering (Box-Blind Index Resolution)
     filtered_results = batch_filter_empty_paths(trunc_paths, return_indices=True)
 
-    # 7. Apply the Math-Engine's indices back onto the Spatial Framework's boxes
-    filtered_batch = []
+    # 8. Apply Math-Engine indices back onto Spatial Boxes and format as PyTorch Tensors
+    resolved_batch = []
     for i, (f_paths, keep_idx) in enumerate(filtered_results):
-        f_boxes = all_boxes[i][:, keep_idx]
-        f_scores = [trunc_scores[i][k] for k in keep_idx]
-        filtered_batch.append((f_boxes, f_paths, f_scores))
+        device = all_boxes[i].device
+        
+        if len(keep_idx) == 0:
+            f_boxes = torch.zeros((0, 4), device=device)
+            f_conf = torch.zeros((0,), device=device)
+            f_cls = torch.zeros((0,), device=device)
+            f_soft_scores = torch.zeros((0, bscores[i].shape[0]), device=device)
+        else:
+            f_boxes = all_boxes[i][:, keep_idx].T  # (N, 4)
+            f_conf = torch.tensor([trunc_scores[i][k][-1].item() for k in keep_idx], device=device, dtype=torch.float)
+            f_cls = torch.tensor([trunc_paths[i][k][-1] for k in keep_idx], device=device, dtype=torch.float)
+            f_soft_scores = bscores[i][:, keep_idx].T  # (N, C)
+            
+        resolved_batch.append((f_boxes, f_conf, f_cls, f_soft_scores))
 
-    return filtered_batch
+    return resolved_batch
 
 
 class v8HierarchicalDetectionLoss(ultralytics.utils.loss.v8DetectionLoss):
@@ -351,14 +321,20 @@ class HierarchicalDetectionValidator(ultralytics.models.yolo.detect.DetectionVal
         preds_tensor = preds[0] if isinstance(preds, (tuple, list)) else preds
         self.hierarchy = active_hierarchy.to(preds_tensor.device)
 
-        filtered_batch = _hierarchical_postprocess(
-            preds, 
-            active_hierarchy, 
-            self.args, 
-            eval_subset_ids=subset_ids
+        all_boxes, bscores = _hierarchical_spatial_filter(preds, active_hierarchy, self.args)
+        resolved_batch = _hierarchical_taxonomic_resolve(
+            all_boxes, bscores, active_hierarchy, self.args, eval_subset_ids=subset_ids
         )
         
-        return pack_ultralytics_dicts(filtered_batch, preds_tensor.device)
+        repacked_results = []
+        for boxes, conf, cls, _ in resolved_batch:
+            repacked_results.append({
+                "bboxes": boxes,
+                "conf": conf,
+                "cls": cls
+            })
+            
+        return repacked_results
 
 
 class HierarchicalDetectionPredictor(ultralytics.models.yolo.detect.DetectionPredictor):
@@ -377,23 +353,28 @@ class HierarchicalDetectionPredictor(ultralytics.models.yolo.detect.DetectionPre
         if hierarchy is None:
             return super().postprocess(preds, img, orig_imgs)
 
-        # 1. Run the unified processing engine (Predictor natively uses the full taxonomy)
-        filtered_batch = _hierarchical_postprocess(preds, hierarchy, self.args)
-
         preds_tensor = preds[0] if isinstance(preds, (tuple, list)) else preds
-        # 2. Pack to Ultralytics Tensors
-        results_tensors = pack_ultralytics_tensors(filtered_batch, preds_tensor.device)
+        device = preds_tensor.device
 
-        # 3. Box Scaling & Translation back to Ultralytics `Results` UI Format
+        all_boxes, bscores = _hierarchical_spatial_filter(preds, hierarchy, self.args)
+        resolved_batch = _hierarchical_taxonomic_resolve(all_boxes, bscores, hierarchy, self.args)
+
         results = []
-        for i, final_pred in enumerate(results_tensors):
+        for i, (boxes, conf, cls, soft_scores) in enumerate(resolved_batch):
             orig_img = orig_imgs[i] if isinstance(orig_imgs, list) else orig_imgs
             
-            if not isinstance(orig_imgs, torch.Tensor) and final_pred.shape[0] > 0:
-                final_pred[:, :4] = ops.scale_boxes(img.shape[2:], final_pred[:, :4], orig_img.shape)
+            if len(boxes) > 0:
+                if not isinstance(orig_imgs, torch.Tensor):
+                    boxes = ops.scale_boxes(img.shape[2:], boxes, orig_img.shape)
+                final_pred = torch.cat([boxes, conf.unsqueeze(1), cls.unsqueeze(1)], dim=1)
+            else:
+                final_pred = torch.zeros((0, 6), device=device)
 
             img_path = self.batch[0][i] if hasattr(self, 'batch') and self.batch is not None else f"image_{i}"
-            results.append(Results(orig_img, path=img_path, names=self.model.names, boxes=final_pred))
+            
+            res = Results(orig_img, path=img_path, names=self.model.names, boxes=final_pred)
+            res.hierarchical_soft_scores = soft_scores 
+            results.append(res)
             
         return results
 
