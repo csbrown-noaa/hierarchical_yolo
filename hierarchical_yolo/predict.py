@@ -6,7 +6,7 @@ import glob
 import torch
 
 from hierarchical_yolo.hierarchical_detection import HierarchicalYOLO, load_hierarchy_from_env
-from hierarchical_yolo.yolo_utils import serialize_soft_hierarchical_predictions
+from yolo_kwcoco_serializer.yolo_kwcoco_serializer import Yolo2KwcocoSerializer
 
 def resolve_latest_weights(model_dir: str, project_name: str) -> str:
     """
@@ -105,6 +105,9 @@ def main():
     # 4. Execute Streaming Inference
     print(f"Starting batched inference on source: {source_path}...")
     
+    # Initialize the stateful serializer with our class dictionary
+    serializer = Yolo2KwcocoSerializer(categories=model.names)
+    
     results_stream = model.predict(
         source=source_path,
         stream=True,
@@ -118,48 +121,17 @@ def main():
         verbose=False
     )
     
-    all_boxes = []
-    all_scores = []
-    images_list = []
-    
     for i, res in enumerate(results_stream):
-        # Extract native boxes (N, 4)
-        all_boxes.append(res.boxes.xyxy)
-        
-        # Extract custom soft scores (N, C), falling back gracefully if missing
-        soft_scores = getattr(res, 'soft_scores', None)
-        if soft_scores is None:
-            soft_scores = torch.zeros((res.boxes.xyxy.shape[0], len(model.names)), device=res.boxes.xyxy.device)
-            
-        all_scores.append(soft_scores)
-        
-        # Build viewer skeleton metadata on the fly
-        images_list.append({
-            'id': i,
-            'file_name': os.path.basename(res.path),
-            'width': res.orig_shape[1],
-            'height': res.orig_shape[0]
-        })
+        # The serializer automatically handles routing, spatial mapping, 
+        # and checking for our 'soft_scores' attribute injection.
+        serializer.add_result(res)
         
         if (i + 1) % 100 == 0:
             print(f"  -> Processed {i + 1} frames/images...")
             
     # 5. Serialization
-    print("Serializing predictions into viewer-compatible JSON...")
-    out_json = serialize_soft_hierarchical_predictions(
-        boxes_batch=all_boxes,
-        scores_batch=all_scores,
-        images_list=images_list,
-        idx_to_node=model.names,
-        hierarchy_roots=hierarchy_obj.roots.tolist(),
-        input_shape=(args.imgsz, args.imgsz)
-    )
-    
-    os.makedirs(os.path.dirname(args.output), exist_ok=True)
-    with open(args.output, 'w') as f:
-        json.dump(out_json, f)
-        
-    print(f"✅ Export complete! Saved to {args.output}")
+    print("Saving predictions to KWCOCO JSON...")
+    serializer.save(args.output)
 
 if __name__ == "__main__":
     main()
