@@ -356,6 +356,8 @@ class HierarchicalDetectionPredictor(ultralytics.models.yolo.detect.DetectionPre
         preds_tensor = preds[0] if isinstance(preds, (tuple, list)) else preds
         device = preds_tensor.device
 
+        hierarchy = hierarchy.to(device)
+
         all_boxes, bscores = _hierarchical_spatial_filter(preds, hierarchy, self.args)
         resolved_batch = _hierarchical_taxonomic_resolve(all_boxes, bscores, hierarchy, self.args)
 
