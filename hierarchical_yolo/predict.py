@@ -57,12 +57,14 @@ def predict(
     nms_iou_thres: float = 0.7,
     batch_size: int = 32,
     imgsz: int = 640,
-    device: str = ''
+    device: str = '',
+    tracker: str = None,
+    persist: bool = False
 ):
     """
-    Core prediction function containing strictly defined keyword arguments to prevent 
-    silent pass-through failures. Executes streaming hierarchical inference and 
-    serializes results to KWCOCO.
+    Core prediction function containing strictly defined keyword arguments.
+    Executes streaming hierarchical inference (with optional tracking) 
+    and serializes results to KWCOCO.
     """
     if not os.path.exists(hierarchy_path):
         raise FileNotFoundError(f"Missing hierarchy.json at {hierarchy_path}")
@@ -82,13 +84,8 @@ def predict(
     
     run_device = device if device else None
     
-    # 2. Execute Streaming Inference
-    print(f"Starting batched inference on source: {source_path}...")
-    
-    # Initialize the stateful serializer with our class dictionary
-    serializer = Yolo2KwcocoSerializer(categories=model.names)
-    
-    results_stream = model.predict(
+    # 2. Configure Inference Engine Arguments
+    inference_args = dict(
         source=source_path,
         stream=True,
         conf=nms_conf_thres,
@@ -101,15 +98,28 @@ def predict(
         verbose=False
     )
     
+    # Initialize the stateful serializer with our class dictionary
+    serializer = Yolo2KwcocoSerializer(categories=model.names)
+    
+    # 3. Execute Streaming Inference (Route to track or predict)
+    if tracker:
+        print(f"Starting batched tracking (Tracker: {tracker}) on source: {source_path}...")
+        inference_args['tracker'] = tracker
+        inference_args['persist'] = persist
+        results_stream = model.track(**inference_args)
+    else:
+        print(f"Starting batched inference on source: {source_path}...")
+        results_stream = model.predict(**inference_args)
+    
     for i, res in enumerate(results_stream):
         # The serializer automatically handles routing, spatial mapping, 
-        # and checking for our 'soft_scores' attribute injection.
+        # tracking IDs, and checking for our 'soft_scores' attribute injection.
         serializer.add_result(res)
         
         if (i + 1) % 100 == 0:
             print(f"  -> Processed {i + 1} frames/images...")
             
-    # 3. Serialization
+    # 4. Serialization
     print("Saving predictions to KWCOCO JSON...")
     serializer.save(output_path)
 
@@ -126,6 +136,7 @@ def main():
     parser.add_argument('--source', type=str, default=None, help="Direct path to images or video. Overrides workspace split.")
     parser.add_argument('--hierarchy_json', type=str, default=None, help="Direct path to hierarchy.json. Overrides workspace.")
     
+    # Inference arguments
     parser.add_argument('--split', type=str, default='val', help="Dataset split to evaluate (must match pycocowriter YAML key).")
     parser.add_argument('--output', type=str, default='hierarchical_preds.json', help="Output JSON path")
     parser.add_argument('--nms_conf_thres', type=float, default=0.01, help="Very permissive NMS confidence threshold")
@@ -133,6 +144,11 @@ def main():
     parser.add_argument('--batch_size', type=int, default=32, help="Inference batch size")
     parser.add_argument('--imgsz', type=int, default=640, help="Inference image size")
     parser.add_argument('--device', type=str, default='', help="Device to use for inference (e.g., '0' or 'cpu').")
+    
+    # Tracking arguments
+    parser.add_argument('--tracker', type=str, default=None, help="Tracker config (e.g., 'botsort.yaml' or 'bytetrack.yaml'). Enables tracking.")
+    parser.add_argument('--persist', action='store_true', help="Persist tracks between frames/streams (required for video tracking).")
+    
     args = parser.parse_args()
     
     # 1. Resolve Weights
@@ -159,7 +175,9 @@ def main():
         nms_iou_thres=args.nms_iou_thres,
         batch_size=args.batch_size,
         imgsz=args.imgsz,
-        device=args.device
+        device=args.device,
+        tracker=args.tracker,
+        persist=args.persist
     )
 
 if __name__ == "__main__":
