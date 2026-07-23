@@ -48,6 +48,71 @@ def resolve_image_directory(data_yaml_path: str, split: str) -> str:
     img_dir = os.path.join(base_path, img_dir_rel)
     return os.path.abspath(img_dir)
 
+def predict(
+    weights_path: str,
+    hierarchy_path: str,
+    source_path: str,
+    output_path: str = 'hierarchical_preds.json',
+    nms_conf_thres: float = 0.01,
+    nms_iou_thres: float = 0.7,
+    batch_size: int = 32,
+    imgsz: int = 640,
+    device: str = ''
+):
+    """
+    Core prediction function containing strictly defined keyword arguments to prevent 
+    silent pass-through failures. Executes streaming hierarchical inference and 
+    serializes results to KWCOCO.
+    """
+    if not os.path.exists(hierarchy_path):
+        raise FileNotFoundError(f"Missing hierarchy.json at {hierarchy_path}")
+
+    # 1. Load Model and Hierarchy
+    print(f"Loading model from {weights_path}...")
+    
+    # Inject hierarchy path into the environment for safe loading
+    os.environ['HIERARCHY_PATH'] = hierarchy_path
+    
+    # Load base model to extract class names
+    temp_model = HierarchicalYOLO(weights_path)
+    hierarchy_obj = load_hierarchy_from_env(temp_model.names)
+    
+    # Reload model correctly bound to the hierarchy object
+    model = HierarchicalYOLO(weights_path, hierarchy=hierarchy_obj)
+    
+    run_device = device if device else None
+    
+    # 2. Execute Streaming Inference
+    print(f"Starting batched inference on source: {source_path}...")
+    
+    # Initialize the stateful serializer with our class dictionary
+    serializer = Yolo2KwcocoSerializer(categories=model.names)
+    
+    results_stream = model.predict(
+        source=source_path,
+        stream=True,
+        conf=nms_conf_thres,
+        iou=nms_iou_thres,
+        imgsz=imgsz,
+        batch=batch_size,
+        device=run_device,
+        save=False,  # Headless mode prevents UI crash from custom attributes
+        plots=False,
+        verbose=False
+    )
+    
+    for i, res in enumerate(results_stream):
+        # The serializer automatically handles routing, spatial mapping, 
+        # and checking for our 'soft_scores' attribute injection.
+        serializer.add_result(res)
+        
+        if (i + 1) % 100 == 0:
+            print(f"  -> Processed {i + 1} frames/images...")
+            
+    # 3. Serialization
+    print("Saving predictions to KWCOCO JSON...")
+    serializer.save(output_path)
+
 def main():
     parser = argparse.ArgumentParser(description="Export hierarchical predictions to a viewer-compatible COCO JSON.")
     
@@ -84,54 +149,18 @@ def main():
         if not hierarchy_path or not source_path:
             raise ValueError("If --workspace_dir is omitted, you must provide --source and --hierarchy_json.")
 
-    if not os.path.exists(hierarchy_path):
-        raise FileNotFoundError(f"Missing hierarchy.json at {hierarchy_path}")
-        
-    # 3. Load Model and Hierarchy
-    print(f"Loading model from {weights_path}...")
-    
-    # Inject hierarchy path into the environment for safe loading
-    os.environ['HIERARCHY_PATH'] = hierarchy_path
-    
-    # Load base model to extract class names
-    temp_model = HierarchicalYOLO(weights_path)
-    hierarchy_obj = load_hierarchy_from_env(temp_model.names)
-    
-    # Reload model correctly bound to the hierarchy object
-    model = HierarchicalYOLO(weights_path, hierarchy=hierarchy_obj)
-    
-    run_device = args.device if args.device else None
-    
-    # 4. Execute Streaming Inference
-    print(f"Starting batched inference on source: {source_path}...")
-    
-    # Initialize the stateful serializer with our class dictionary
-    serializer = Yolo2KwcocoSerializer(categories=model.names)
-    
-    results_stream = model.predict(
-        source=source_path,
-        stream=True,
-        conf=args.nms_conf_thres,
-        iou=args.nms_iou_thres,
+    # 3. Delegate to the core prediction function
+    predict(
+        weights_path=weights_path,
+        hierarchy_path=hierarchy_path,
+        source_path=source_path,
+        output_path=args.output,
+        nms_conf_thres=args.nms_conf_thres,
+        nms_iou_thres=args.nms_iou_thres,
+        batch_size=args.batch_size,
         imgsz=args.imgsz,
-        batch=args.batch_size,
-        device=run_device,
-        save=False,  # Headless mode prevents UI crash from custom attributes
-        plots=False,
-        verbose=False
+        device=args.device
     )
-    
-    for i, res in enumerate(results_stream):
-        # The serializer automatically handles routing, spatial mapping, 
-        # and checking for our 'soft_scores' attribute injection.
-        serializer.add_result(res)
-        
-        if (i + 1) % 100 == 0:
-            print(f"  -> Processed {i + 1} frames/images...")
-            
-    # 5. Serialization
-    print("Saving predictions to KWCOCO JSON...")
-    serializer.save(args.output)
 
 if __name__ == "__main__":
     main()
