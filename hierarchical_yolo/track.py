@@ -40,8 +40,11 @@ def trick_tracker_callback(predictor):
             if hasattr(result, 'soft_scores') and result.soft_scores is not None:
                 result.orig_soft_scores_copy = result.soft_scores.clone()
             
-            # Force all classes to the dynamically discovered dummy class
-            result.boxes.data[:, -1] = dummy_class
+            # 3. Force all classes to the dynamically discovered dummy class
+            # Clone the data tensor to avoid PyTorch InferenceMode inplace update errors
+            new_data = result.boxes.data.clone()
+            new_data[:, -1] = dummy_class
+            result.boxes.data = new_data
 
 def smooth_classes_by_mode(class_history_list, fallback_class):
     """
@@ -165,10 +168,13 @@ def class_agnostic_track(model, source_path, inference_args, iou_threshold=0.85)
             smoothed_class = smooth_classes_by_mode(track_class_history[track_id], fallback_class=dummy_class)
             smoothed_cls_tensor[i] = smoothed_class
                 
-        # Mutate the result object to inject the smoothed classes back in
-        result.boxes.data[:, -1] = smoothed_cls_tensor
+        # 3. Mutate the result object to inject the smoothed classes back in
+        # Clone the data tensor to avoid PyTorch InferenceMode inplace update errors
+        new_data = result.boxes.data.clone()
+        new_data[:, -1] = smoothed_cls_tensor
+        result.boxes.data = new_data
         
-        # Inject the re-aligned explicit soft_scores back into the result object
+        # 4. Inject the re-aligned explicit soft_scores back into the result object
         if new_soft_scores is not None:
             result.soft_scores = new_soft_scores
             
