@@ -7,10 +7,30 @@ import torch
 
 from hierarchical_yolo.hierarchical_detection import HierarchicalYOLO, load_hierarchy_from_env
 from yolo_kwcoco_serializer.yolo_kwcoco_serializer import Yolo2KwcocoSerializer
+from track import class_agnostic_track
 
 def resolve_latest_weights(model_dir: str, project_name: str) -> str:
     """
     Discovers the most recently modified 'best.pt' weights for a given project.
+
+    Parameters
+    ----------
+    model_dir : str
+        Path to the root directory where models and runs were saved.
+    project_name : str
+        The specific namespace or experiment run to evaluate.
+
+    Returns
+    -------
+    str
+        The absolute path to the inferred latest 'best.pt' file.
+
+    Raises
+    ------
+    ValueError
+        If either `model_dir` or `project_name` is omitted.
+    FileNotFoundError
+        If no 'best.pt' files could be found under the project directory.
     """
     if not model_dir or not project_name:
         raise ValueError("Must provide both model_dir and project_name to infer weights.")
@@ -32,6 +52,23 @@ def resolve_image_directory(data_yaml_path: str, split: str) -> str:
     """
     Parses a YOLO dataset YAML file to determine the absolute path to the physical 
     image directory for a specific split.
+
+    Parameters
+    ----------
+    data_yaml_path : str
+        Path to the YOLO dataset YAML configuration file.
+    split : str
+        Dataset split to evaluate (e.g., 'train', 'val', 'test').
+
+    Returns
+    -------
+    str
+        Absolute path to the resolved image directory.
+
+    Raises
+    ------
+    ValueError
+        If the requested split is not found within the dataset YAML.
     """
     with open(data_yaml_path, 'r') as f:
         data_cfg = yaml.safe_load(f)
@@ -59,12 +96,46 @@ def predict(
     imgsz: int = 640,
     device: str = '',
     tracker: str = None,
-    persist: bool = False
+    persist: bool = False,
+    class_agnostic_tracking: bool = False
 ):
     """
     Core prediction function containing strictly defined keyword arguments.
+    
     Executes streaming hierarchical inference (with optional tracking) 
     and serializes results to KWCOCO.
+
+    Parameters
+    ----------
+    weights_path : str
+        Path to trained best.pt model weights.
+    hierarchy_path : str
+        Path to the hierarchy JSON file defining categorical relationships.
+    source_path : str
+        Path to the input images or video source.
+    output_path : str, optional
+        Path for the output KWCOCO JSON file (default 'hierarchical_preds.json').
+    nms_conf_thres : float, optional
+        Confidence threshold for NMS (default 0.01).
+    nms_iou_thres : float, optional
+        IoU threshold for NMS (default 0.7).
+    batch_size : int, optional
+        Inference batch size (default 32).
+    imgsz : int, optional
+        Inference image size (default 640).
+    device : str, optional
+        Compute device to use, e.g., '0' or 'cpu' (default '').
+    tracker : str, optional
+        Tracker config (e.g., 'botsort.yaml' or 'bytetrack.yaml') to enable tracking (default None).
+    persist : bool, optional
+        Whether to persist tracks across streams/frames (default False).
+    class_agnostic_tracking : bool, optional
+        Enable class-agnostic tracking to prevent track loss during category flicker (default False).
+
+    Raises
+    ------
+    FileNotFoundError
+        If the specified hierarchy JSON file does not exist.
     """
     if not os.path.exists(hierarchy_path):
         raise FileNotFoundError(f"Missing hierarchy.json at {hierarchy_path}")
@@ -106,7 +177,17 @@ def predict(
         print(f"Starting batched tracking (Tracker: {tracker}) on source: {source_path}...")
         inference_args['tracker'] = tracker
         inference_args['persist'] = persist
-        results_stream = model.track(**inference_args)
+        
+        if class_agnostic_tracking:
+            print("--> Using Class-Agnostic Tracking with IoU Category Recovery.")
+            # Use our custom generator instead of the native track method
+            results_stream = class_agnostic_track(
+                model=model, 
+                source_path=source_path, 
+                inference_args=inference_args
+            )
+        else:
+            results_stream = model.track(**inference_args)
     else:
         print(f"Starting batched inference on source: {source_path}...")
         results_stream = model.predict(**inference_args)
@@ -124,6 +205,12 @@ def predict(
     serializer.save(output_path)
 
 def main():
+    """
+    Main CLI entry point.
+    
+    Parses arguments, resolves required paths (weights, hierarchies, image sources),
+    and initiates the prediction/tracking pipeline.
+    """
     parser = argparse.ArgumentParser(description="Export hierarchical predictions to a viewer-compatible COCO JSON.")
     
     # Workspace arguments (Required for standard dataset eval)
@@ -148,6 +235,7 @@ def main():
     # Tracking arguments
     parser.add_argument('--tracker', type=str, default=None, help="Tracker config (e.g., 'botsort.yaml' or 'bytetrack.yaml'). Enables tracking.")
     parser.add_argument('--persist', action='store_true', help="Persist tracks between frames/streams (required for video tracking).")
+    parser.add_argument('--class_agnostic_tracking', action='store_true', help="Enable class-agnostic tracking to prevent track loss during category flicker.")
     
     args = parser.parse_args()
     
@@ -177,7 +265,8 @@ def main():
         imgsz=args.imgsz,
         device=args.device,
         tracker=args.tracker,
-        persist=args.persist
+        persist=args.persist,
+        class_agnostic_tracking=args.class_agnostic_tracking
     )
 
 if __name__ == "__main__":
