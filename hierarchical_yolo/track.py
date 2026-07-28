@@ -105,7 +105,7 @@ def class_agnostic_track(model, source_path, inference_args, iou_threshold=0.85)
     dummy_class = int(hierarchy.roots[0].item())
         
     # 2. Attach our flattened callback
-    model.clear_callbacks()
+    model.reset_callbacks()
     model.add_callback("on_predict_postprocess_end", trick_tracker_callback)
     
     # Track ID -> List of raw integer classes mapped to that ID
@@ -173,4 +173,4 @@ def class_agnostic_track(model, source_path, inference_args, iou_threshold=0.85)
         yield result
         
     # Clean up the callback when the stream finishes
-    model.clear_callbacks()
+    model.reset_callbacks()
