@@ -7,7 +7,7 @@ import torch
 
 from hierarchical_yolo.hierarchical_detection import HierarchicalYOLO, load_hierarchy_from_env
 from yolo_kwcoco_serializer.yolo_kwcoco_serializer import Yolo2KwcocoSerializer
-from track import class_agnostic_track
+from hierarchical_yolo.track import class_agnostic_track
 
 def resolve_latest_weights(model_dir: str, project_name: str) -> str:
     """
