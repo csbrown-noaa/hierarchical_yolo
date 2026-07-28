@@ -1,33 +1,5 @@
 import torch
-import statistics
-from collections import defaultdict
 from torchvision.ops import box_iou
-
-def smooth_classes_by_mode(class_history_list, fallback_class):
-    """
-    Takes a list of raw class predictions for a specific track ID and 
-    returns the most frequently occurring class (the mode).
-
-    Parameters
-    ----------
-    class_history_list : list of int
-        List of historical class IDs assigned to a specific track.
-    fallback_class : int
-        The class ID to return if the history list is empty (e.g., the root class).
-
-    Returns
-    -------
-    int
-        The most frequent class ID (mode). If there is a tie, falls back to the 
-        most recent class prediction.
-    """
-    if not class_history_list:
-        return fallback_class
-        
-    try:
-        return statistics.mode(class_history_list)
-    except statistics.StatisticsError:
-        return class_history_list[-1]
 
 def class_agnostic_track(model, source_path, inference_args, iou_threshold=0.5):
     """
@@ -101,9 +73,6 @@ def class_agnostic_track(model, source_path, inference_args, iou_threshold=0.5):
     model.clear_callback("on_predict_postprocess_end")
     model.add_callback("on_predict_postprocess_end", trick_tracker_callback)
     
-    # Track ID -> List of raw integer classes mapped to that ID
-    track_class_history = defaultdict(list)
-    
     # 3. Execute the tracking stream
     results_stream = model.track(**inference_args)
     
@@ -126,7 +95,8 @@ def class_agnostic_track(model, source_path, inference_args, iou_threshold=0.5):
         orig_conf = current_stash.get("orig_conf")
         orig_soft_scores = current_stash.get("orig_soft_scores")
         
-        smoothed_cls_tensor = torch.zeros_like(result.boxes.cls)
+        # Default all tracks to dummy_class. Only matched tracks will be overwritten with true classes.
+        smoothed_cls_tensor = torch.full_like(result.boxes.cls, dummy_class)
         
         # Prepare explicit soft_scores initialized with NaNs for unmatched ghost tracks
         new_soft_scores = None
@@ -154,15 +124,11 @@ def class_agnostic_track(model, source_path, inference_args, iou_threshold=0.5):
                     best_match_idx = torch.argmax(valid_ious).item()
                     
                     real_class = int(orig_classes[best_match_idx].item())
-                    track_class_history[track_id].append(real_class)
+                    smoothed_cls_tensor[i] = real_class
                     
                     # Re-align explicit soft_scores
                     if new_soft_scores is not None:
                         new_soft_scores[i] = orig_soft_scores[best_match_idx]
-            
-            # Retrieve from history (This inherently covers both matched boxes and ghost tracks)
-            smoothed_class = smooth_classes_by_mode(track_class_history[track_id], fallback_class=dummy_class)
-            smoothed_cls_tensor[i] = smoothed_class
                 
         # Clone again to bypass PyTorch InferenceMode restrictions before mutation
         result.boxes.data = result.boxes.data.clone()
