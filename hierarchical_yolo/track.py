@@ -3,49 +3,6 @@ import statistics
 from collections import defaultdict
 from torchvision.ops import box_iou
 
-def trick_tracker_callback(predictor):
-    """
-    Callback function to be attached to the Ultralytics YOLO model.
-    
-    It executes right after NMS, before the tracker processes the detections.
-    It stashes the original boxes, classes, and explicit soft_scores, 
-    then queries the model's hierarchy to force all classes to the root dummy class.
-    This tricks the tracker into treating every object as the same category.
-    
-    Parameters
-    ----------
-    predictor : ultralytics.engine.predictor.BasePredictor
-        The active YOLO predictor object containing the current batch of results.
-        
-    Raises
-    ------
-    ValueError
-        If the predictor's model does not have a valid hierarchy with a root node.
-    """
-    # Auto-discover the root class directly from the predictor's model reference.
-    # We check predictor.model.model to bypass the AutoBackend wrapper.
-    hierarchy = getattr(predictor.model.model, 'hierarchy', None)
-    if hierarchy is None or not hasattr(hierarchy, 'roots') or len(hierarchy.roots) == 0:
-        raise ValueError("Class-agnostic tracking requires a valid hierarchy with a defined root class.")
-        
-    dummy_class = int(hierarchy.roots[0].item())
-
-    for result in predictor.results:
-        if result.boxes is not None and len(result.boxes) > 0:
-            # Stash the unmodified coordinates and classes inside the result object
-            result.orig_boxes_copy = result.boxes.xyxy.clone()
-            result.orig_classes_copy = result.boxes.cls.clone()
-            
-            # Explicitly stash soft_scores if they exist on the result object
-            if hasattr(result, 'soft_scores') and result.soft_scores is not None:
-                result.orig_soft_scores_copy = result.soft_scores.clone()
-            
-            # 3. Force all classes to the dynamically discovered dummy class
-            # Clone the data tensor to avoid PyTorch InferenceMode inplace update errors
-            new_data = result.boxes.data.clone()
-            new_data[:, -1] = dummy_class
-            result.boxes.data = new_data
-
 def smooth_classes_by_mode(class_history_list, fallback_class):
     """
     Takes a list of raw class predictions for a specific track ID and 
@@ -87,6 +44,9 @@ def class_agnostic_track(model, source_path, inference_args, iou_threshold=0.85)
     source_path : str
         The direct path to the input images or video source.
     inference_args : dict
+    iou_threshold : float
+        The minimum IoU overlap required to match a tracked box to a raw detection.
+    
     yields
     ------
     ultralytics.engine.results.Results
@@ -98,7 +58,7 @@ def class_agnostic_track(model, source_path, inference_args, iou_threshold=0.85)
         If the model does not have a valid hierarchy with a root node.
     """
     
-    # Auto-discover the root class to use as the fallback for ghost tracks
+    # 1. Auto-discover the root class to use as the fallback for ghost tracks
     hierarchy = getattr(model, 'hierarchy', None)
     if hierarchy is None and hasattr(model, 'model'):
         hierarchy = getattr(model.model, 'hierarchy', None)
@@ -107,19 +67,57 @@ def class_agnostic_track(model, source_path, inference_args, iou_threshold=0.85)
         raise ValueError("Class-agnostic tracking requires a valid hierarchy with a defined root class.")
         
     dummy_class = int(hierarchy.roots[0].item())
+    
+    # This list acts as a synchronized, thread-safe FIFO queue between the callback and the generator loop.
+    # It completely bypasses the tracker's destructive slicing of the `result` object.
+    frame_stash = []
         
-    # Attach our flattened callback. Using clear_callback is safer than reset_callbacks
-    # so we don't accidentally wipe out other integrations (like wandb).
+    def trick_tracker_callback(predictor):
+        """
+        Closure callback that pushes pristine detections onto the local queue 
+        before the tracker has a chance to mangle them.
+        """
+        for result in predictor.results:
+            # Prepare an empty stash dictionary for this specific frame
+            stash = {
+                "orig_boxes": None,
+                "orig_classes": None,
+                "orig_soft_scores": None
+            }
+            
+            if result.boxes is not None and len(result.boxes) > 0:
+                # Stash the unmodified coordinates and classes inside our local dictionary
+                stash["orig_boxes"] = result.boxes.xyxy.clone()
+                stash["orig_classes"] = result.boxes.cls.clone()
+                
+                # Explicitly stash soft_scores if they exist
+                if hasattr(result, 'soft_scores') and result.soft_scores is not None:
+                    stash["orig_soft_scores"] = result.soft_scores.clone()
+                
+                # Force all classes to the dynamically discovered dummy class
+                # Clone the data tensor to avoid PyTorch InferenceMode inplace update errors
+                new_data = result.boxes.data.clone()
+                new_data[:, -1] = dummy_class
+                result.boxes.data = new_data
+                
+            # Push the frame's pristine data onto the queue
+            frame_stash.append(stash)
+
+    # 2. Attach our closure callback
     model.clear_callback("on_predict_postprocess_end")
     model.add_callback("on_predict_postprocess_end", trick_tracker_callback)
     
     # Track ID -> List of raw integer classes mapped to that ID
     track_class_history = defaultdict(list)
     
-    # Execute the tracking stream
+    # 3. Execute the tracking stream
     results_stream = model.track(**inference_args)
     
     for result in results_stream:
+        # Pop the oldest stash off the queue (FIFO)
+        # We MUST pop even if the frame is empty to keep the queue perfectly synchronized!
+        current_stash = frame_stash.pop(0) if frame_stash else {}
+        
         # If no objects were tracked in this frame, just yield the empty result
         if result.boxes is None or result.boxes.id is None:
             yield result
@@ -128,10 +126,10 @@ def class_agnostic_track(model, source_path, inference_args, iou_threshold=0.85)
         tracked_boxes = result.boxes.xyxy
         tracked_ids = result.boxes.id.int().cpu().tolist()
         
-        # Retrieve the stashed original detections that survived NMS
-        orig_boxes = getattr(result, "orig_boxes_copy", None)
-        orig_classes = getattr(result, "orig_classes_copy", None)
-        orig_soft_scores = getattr(result, "orig_soft_scores_copy", None)
+        # Retrieve the original detections securely from our local queue instead of the result object
+        orig_boxes = current_stash.get("orig_boxes")
+        orig_classes = current_stash.get("orig_classes")
+        orig_soft_scores = current_stash.get("orig_soft_scores")
         
         # We must re-align classes/scores even if orig_boxes is empty, 
         # because the tracker might be outputting pure "ghost tracks"
@@ -168,13 +166,13 @@ def class_agnostic_track(model, source_path, inference_args, iou_threshold=0.85)
             smoothed_class = smooth_classes_by_mode(track_class_history[track_id], fallback_class=dummy_class)
             smoothed_cls_tensor[i] = smoothed_class
                 
-        # 3. Mutate the result object to inject the smoothed classes back in
+        # 4. Mutate the result object to inject the smoothed classes back in
         # Clone the data tensor to avoid PyTorch InferenceMode inplace update errors
         new_data = result.boxes.data.clone()
         new_data[:, -1] = smoothed_cls_tensor
         result.boxes.data = new_data
         
-        # 4. Inject the re-aligned explicit soft_scores back into the result object
+        # 5. Inject the re-aligned explicit soft_scores back into the result object
         if new_soft_scores is not None:
             result.soft_scores = new_soft_scores
             
