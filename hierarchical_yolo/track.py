@@ -22,8 +22,9 @@ def trick_tracker_callback(predictor):
     ValueError
         If the predictor's model does not have a valid hierarchy with a root node.
     """
-    # 1. Auto-discover the root class directly from the predictor's model reference
-    hierarchy = getattr(predictor.model, 'hierarchy', None)
+    # Auto-discover the root class directly from the predictor's model reference.
+    # We check predictor.model.model to bypass the AutoBackend wrapper.
+    hierarchy = getattr(predictor.model.model, 'hierarchy', None)
     if hierarchy is None or not hasattr(hierarchy, 'roots') or len(hierarchy.roots) == 0:
         raise ValueError("Class-agnostic tracking requires a valid hierarchy with a defined root class.")
         
@@ -31,7 +32,7 @@ def trick_tracker_callback(predictor):
 
     for result in predictor.results:
         if result.boxes is not None and len(result.boxes) > 0:
-            # 2. Stash the unmodified coordinates and classes inside the result object
+            # Stash the unmodified coordinates and classes inside the result object
             result.orig_boxes_copy = result.boxes.xyxy.clone()
             result.orig_classes_copy = result.boxes.cls.clone()
             
@@ -39,7 +40,7 @@ def trick_tracker_callback(predictor):
             if hasattr(result, 'soft_scores') and result.soft_scores is not None:
                 result.orig_soft_scores_copy = result.soft_scores.clone()
             
-            # 3. Force all classes to the dynamically discovered dummy class
+            # Force all classes to the dynamically discovered dummy class
             result.boxes.data[:, -1] = dummy_class
 
 def smooth_classes_by_mode(class_history_list, fallback_class):
@@ -94,7 +95,7 @@ def class_agnostic_track(model, source_path, inference_args, iou_threshold=0.85)
         If the model does not have a valid hierarchy with a root node.
     """
     
-    # 1. Auto-discover the root class to use as the fallback for ghost tracks
+    # Auto-discover the root class to use as the fallback for ghost tracks
     hierarchy = getattr(model, 'hierarchy', None)
     if hierarchy is None and hasattr(model, 'model'):
         hierarchy = getattr(model.model, 'hierarchy', None)
@@ -104,14 +105,15 @@ def class_agnostic_track(model, source_path, inference_args, iou_threshold=0.85)
         
     dummy_class = int(hierarchy.roots[0].item())
         
-    # 2. Attach our flattened callback
-    model.reset_callbacks()
+    # Attach our flattened callback. Using clear_callback is safer than reset_callbacks
+    # so we don't accidentally wipe out other integrations (like wandb).
+    model.clear_callback("on_predict_postprocess_end")
     model.add_callback("on_predict_postprocess_end", trick_tracker_callback)
     
     # Track ID -> List of raw integer classes mapped to that ID
     track_class_history = defaultdict(list)
     
-    # 3. Execute the tracking stream
+    # Execute the tracking stream
     results_stream = model.track(**inference_args)
     
     for result in results_stream:
@@ -163,14 +165,14 @@ def class_agnostic_track(model, source_path, inference_args, iou_threshold=0.85)
             smoothed_class = smooth_classes_by_mode(track_class_history[track_id], fallback_class=dummy_class)
             smoothed_cls_tensor[i] = smoothed_class
                 
-        # 3. Mutate the result object to inject the smoothed classes back in
+        # Mutate the result object to inject the smoothed classes back in
         result.boxes.data[:, -1] = smoothed_cls_tensor
         
-        # 4. Inject the re-aligned explicit soft_scores back into the result object
+        # Inject the re-aligned explicit soft_scores back into the result object
         if new_soft_scores is not None:
             result.soft_scores = new_soft_scores
             
         yield result
         
     # Clean up the callback when the stream finishes
-    model.reset_callbacks()
+    model.clear_callback("on_predict_postprocess_end")
