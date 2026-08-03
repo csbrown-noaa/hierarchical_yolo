@@ -68,6 +68,19 @@ class HierarchicalObjectnessValidator(DetectionValidator):
 
     def init_metrics(self, model):
         super().init_metrics(model)
+        
+        # 1. Grab the original 1-to-N class names from the dataset configuration
+        # BEFORE we overwrite them.
+        original_names = getattr(self, 'data', {}).get('names', {})
+        
+        # 2. Safely initialize the Hierarchy object using the true taxonomy
+        if self.hierarchy is None:
+            active_hierarchy = getattr(model, 'hierarchy', None)
+            if active_hierarchy is None and original_names:
+                active_hierarchy = load_hierarchy_from_env(original_names)
+            self.hierarchy = active_hierarchy
+
+        # 3. Squash the vocabulary to evaluate pure objectness
         self.nc = 1
         self.names = {0: 'object'}
         if hasattr(self, 'metrics'):
@@ -83,16 +96,12 @@ class HierarchicalObjectnessValidator(DetectionValidator):
     def postprocess(self, preds):
         preds_tensor = preds[0]
         
-        # Lazy load the hierarchy from env to avoid pickling/model-detachment errors
+        # Ensure hierarchy is on the correct device. It should already be safely 
+        # built by init_metrics, completely bypassing the previous crash.
         if self.hierarchy is None:
-            active_hierarchy = getattr(self.model, 'hierarchy', None) if hasattr(self, 'model') else None
+            raise RuntimeError("Hierarchy was not initialized during init_metrics.")
             
-            if active_hierarchy is None:
-                yolo_names = getattr(self, 'data', {}).get('names', {})
-                active_hierarchy = load_hierarchy_from_env(yolo_names)
-                    
-            self.hierarchy = active_hierarchy.to(preds_tensor.device)  # Cache it on device
-        elif self.hierarchy.roots.device != preds_tensor.device:
+        if self.hierarchy.roots.device != preds_tensor.device:
             self.hierarchy = self.hierarchy.to(preds_tensor.device)
             
         cls_probs = preds_tensor[:, 4:, :]  # [B, C, Detections]
@@ -192,7 +201,6 @@ def run_objectness(
     print("="*50)
     return res
 
-
 def run_specificity(
     weights: str,
     hierarchical_eval_yaml: str,
@@ -253,7 +261,6 @@ def run_specificity(
     print(f"✅ GLOBAL SPECIFICITY mAP50-95: {res.box.map:.4f}")
     print("="*50)
     return res
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Apples-to-Apples Evaluation Toolbox")
