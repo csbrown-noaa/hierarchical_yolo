@@ -312,6 +312,8 @@ class HierarchicalDetectionValidator(ultralytics.models.yolo.detect.DetectionVal
             subset_ids = self.eval_subset_ids
             active_hierarchy = self.hierarchy
 
+        print(subset_ids)
+
         # 2. Defensive fallback: If hierarchy is somehow lost in DDP context, rebuild it
         if active_hierarchy is None:
             yolo_names = getattr(self, 'data', {}).get('names', {})
