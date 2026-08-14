@@ -241,20 +241,24 @@ def run_specificity(
     # 2. Evaluate Masked Hierarchical Model
     model = HierarchicalYOLO(weights, hierarchy=hierarchy_obj)
     
-    # plots=True enables the native YOLO confusion matrix, PR curves, and rich table output
-    res = model.val(
-        data=hierarchical_eval_yaml,
-        split=split,
-        eval_subset_ids=eval_subset_ids, 
-        imgsz=imgsz, 
-        batch=batch, 
-        device=run_device, 
-        plots=True,
-        save_json=True,
-        project=project,
-        name=name,
-        exist_ok=True
-    )
+    os.environ['EVAL_SUBSET_IDS'] = json.dumps(eval_subset_ids)
+    try:
+        # plots=True enables the native YOLO confusion matrix, PR curves, and rich table output
+        res = model.val(
+            data=hierarchical_eval_yaml,
+            split=split,
+            imgsz=imgsz, 
+            batch=batch, 
+            device=run_device, 
+            plots=True,
+            save_json=True,
+            project=project,
+            name=name,
+            exist_ok=True
+        )
+    finally:
+        if 'EVAL_SUBSET_IDS' in os.environ:
+            del os.environ['EVAL_SUBSET_IDS']
 
     print("\n" + "="*50)
     print(f"📊 FULL OUTPUT SAVED TO: {os.path.join(project, name)}")
