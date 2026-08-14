@@ -312,8 +312,9 @@ class HierarchicalDetectionValidator(ultralytics.models.yolo.detect.DetectionVal
             subset_ids = self.eval_subset_ids
             active_hierarchy = self.hierarchy
 
-        LOGGER.critical(subset_ids)
-        raise Exception(str(subset_ids))
+        # Override with Global Environment if present (bypasses Ultralytics state drops)
+        if 'EVAL_SUBSET_IDS' in os.environ:
+            subset_ids = json.loads(os.environ['EVAL_SUBSET_IDS'])
 
         # 2. Defensive fallback: If hierarchy is somehow lost in DDP context, rebuild it
         if active_hierarchy is None:
