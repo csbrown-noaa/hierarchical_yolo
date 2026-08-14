@@ -435,19 +435,24 @@ def evaluate_hierarchical_model_calibration(
     model = HierarchicalYOLO(weights, hierarchy=hierarchy_obj)
     run_device = None if not device else device
     
-    model.val(
-        data=data_yaml,
-        split=split,
-        eval_subset_ids=eval_subset_ids,  # Clamps hierarchical predictions to leaf nodes
-        imgsz=imgsz, 
-        batch=batch, 
-        device=run_device, 
-        plots=False,         # Save time, we build our own plots
-        save_json=True,      # MANDATORY: Triggers COCO JSON output
-        project=project,
-        name=name,
-        exist_ok=True
-    )
+    os.environ['EVAL_SUBSET_IDS'] = json.dumps(eval_subset_ids)
+    try:
+        model.val(
+            data=data_yaml,
+            split=split,
+            eval_subset_ids=eval_subset_ids,  # Clamps hierarchical predictions to leaf nodes
+            imgsz=imgsz, 
+            batch=batch, 
+            device=run_device, 
+            plots=False,         # Save time, we build our own plots
+            save_json=True,      # MANDATORY: Triggers COCO JSON output
+            project=project,
+            name=name,
+            exist_ok=True
+        )
+    finally:
+        if 'EVAL_SUBSET_IDS' in os.environ:
+            del os.environ['EVAL_SUBSET_IDS']
     
     _analyze_predictions_json(project, name, gt_json, data_yaml, iou_thres, bins, "Hierarchical Model Calibration")
 
