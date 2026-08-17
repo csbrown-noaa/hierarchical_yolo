@@ -310,6 +310,7 @@ def calculate_and_plot_ece(results: list, num_bins: int, output_dir: str, title:
     ax1.legend(loc='upper left')
     ax1.grid(True, linestyle='--', alpha=0.5)
 
+    '''
     # Plot density histogram as an inset or secondary visual
     ax2 = ax1.twinx()
     ax2.bar(bin_centers, bin_counts, width=widths, color='lightgray', alpha=0.3, zorder=-1)
@@ -318,6 +319,7 @@ def calculate_and_plot_ece(results: list, num_bins: int, output_dir: str, title:
     # Adjust ax2 scale so it doesn't overlap visually too much with the main chart
     max_count = max(bin_counts) if max(bin_counts) > 0 else 1
     ax2.set_ylim([0, max_count * 4]) 
+    '''
 
     plot_path = os.path.join(output_dir, f"{title.replace(' ', '_').lower()}_reliability.png")
     plt.tight_layout()
