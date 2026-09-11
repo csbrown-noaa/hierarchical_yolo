@@ -305,7 +305,8 @@ def serialize_soft_hierarchical_predictions(
 
 def conditionals_to_marginals(
     preds: torch.Tensor,
-    hierarchy_index_tensor: torch.Tensor,
+    hierarchy_parent_tensor: torch.Tensor,
+    hierarchy_nodes_by_depth: [torch.Tensor],
     eval_subset_ids: list[int] | set[int] | torch.Tensor | None = None
 ) -> torch.Tensor:
     """
@@ -336,7 +337,7 @@ def conditionals_to_marginals(
     cls_probs = preds[:, 4:, :].transpose(1, 2)
     
     # Apply Hierarchical Math (Conditional -> Marginal)
-    marginal_probs = conditional_to_marginal(cls_probs, hierarchy_index_tensor)
+    marginal_probs = conditional_to_marginal(cls_probs, hierarchy_parent_tensor, hierarchy_nodes_by_depth)
     
     # Optional Subsetting
     if eval_subset_ids is not None:

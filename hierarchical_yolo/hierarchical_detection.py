@@ -57,7 +57,8 @@ def _hierarchical_spatial_filter(preds, hierarchy, args):
     # 1. Convert conditionals to true marginal probabilities natively
     marginals_tensor = conditionals_to_marginals(
         preds_tensor, 
-        hierarchy.index_tensor, 
+        hierarchy.parent_tensor,
+        hierarchy.nodes_by_depth, 
         eval_subset_ids=None 
     )
 
