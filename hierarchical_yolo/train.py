@@ -39,7 +39,8 @@ def train_curriculum(
     batch: int = 16,
     device: str = "",
     val: bool = False,
-    workers: int = 0
+    workers: int = 0,
+    resume: bool = False
 ) -> None:
     """
     Orchestrates the staged curriculum training of a hierarchical YOLO model.
@@ -73,6 +74,8 @@ def train_curriculum(
         Whether to run validation during training (default is False, as hierarchical validation is WIP).
     workers : int, optional
         Number of worker threads for data loading (per RANK if Multi-GPU training)
+    resume : bool, optional
+        Whether to resume training from the most recent interrupted curriculum depth (default is False).
     """
     hierarchy_json_path = os.path.join(workspace_dir, 'hierarchy.json')
     
@@ -101,6 +104,30 @@ def train_curriculum(
         if not os.path.exists(data_yaml):
             raise FileNotFoundError(f"Missing curriculum YAML: {data_yaml}")
             
+        current_stage_dir = os.path.join(project_path, run_name)
+        do_resume_this_stage = False
+        
+        if resume:
+            next_run_name = f"curriculum_depth_{depth + 1:03d}"
+            next_stage_dir = os.path.join(project_path, next_run_name)
+            
+            # Fast-forward if next stage exists (guarantees current stage completed)
+            if depth < max_depth and os.path.exists(next_stage_dir):
+                print(f"⏩ Skipping Stage {depth} (Next stage exists, assuming complete).")
+                best_weights_path = os.path.join(current_stage_dir, "weights", "best.pt")
+                if not os.path.exists(best_weights_path):
+                    best_weights_path = os.path.join(current_stage_dir, "weights", "last.pt")
+                current_weights = best_weights_path
+                continue
+                
+            # If we didn't fast-forward, we are at the frontier.
+            # Check for last.pt to trigger Ultralytics native resume.
+            last_weights_path = os.path.join(current_stage_dir, "weights", "last.pt")
+            if os.path.exists(last_weights_path):
+                print(f"🔄 Resuming Stage {depth} from checkpoint: {last_weights_path}")
+                current_weights = last_weights_path
+                do_resume_this_stage = True
+                
         overrides = {
             "model": current_weights,
             "data": data_yaml,
@@ -114,6 +141,9 @@ def train_curriculum(
             "val": val,
             "workers": workers if workers else 8,
         }
+        
+        if do_resume_this_stage:
+            overrides["resume"] = True
         
         # 1. Initialize our custom DDP-ready hierarchical trainer
         trainer = HierarchicalDetectionTrainer(overrides=overrides)
@@ -206,6 +236,11 @@ if __name__ == "__main__":
         default=8,
         help="Number of worker threads for data loading (per RANK if Multi-GPU training). "
     )
+    parser.add_argument(
+        '--resume',
+        action='store_true',
+        help="Resume training from the most recent interrupted curriculum depth."
+    )
     
     args = parser.parse_args()
     
@@ -220,5 +255,6 @@ if __name__ == "__main__":
         batch=args.batch,
         device=args.device,
         val=args.val,
-        workers=args.workers
+        workers=args.workers,
+        resume=args.resume
     )
